@@ -16,7 +16,7 @@ pub struct Capturer {
     rgba: Vec<u8>,
     //派宝改动：旋转数据辅助变量
     tmp_bgra: Vec<u8>,
-    rotation: u8,
+    rotation: u16,
     //改动结束
     saved_raw_data: Vec<u8>, // for faster compare and copy
 }
