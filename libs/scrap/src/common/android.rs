@@ -1,5 +1,6 @@
 use crate::android::ffi::*;
 use crate::rgba_to_i420;
+use crate::ARGBRotate; //派宝改动：使用linyuv库旋转画面数据
 use lazy_static::lazy_static;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -13,6 +14,10 @@ lazy_static! {
 pub struct Capturer {
     display: Display,
     bgra: Vec<u8>,
+    //派宝改动：旋转数据辅助变量
+    tmp_bgra: Vec<u8>,
+    rotation: u8,
+    //改动结束
     saved_raw_data: Vec<u8>, // for faster compare and copy
 }
 
@@ -21,6 +26,10 @@ impl Capturer {
         Ok(Capturer {
             display,
             bgra: Vec::new(),
+            //派宝改动：旋转数据辅助变量
+            tmp_bgra: Vec::new(),
+            rotation: 360,
+            //改动结束
             saved_raw_data: Vec::new(),
         })
     }
@@ -40,7 +49,46 @@ impl crate::TraitCapturer for Capturer {
     fn frame<'a>(&'a mut self, _timeout: Duration) -> io::Result<Frame<'a>> {
         if let Some(buf) = get_video_raw() {
             crate::would_block_if_equal(&mut self.saved_raw_data, buf)?;
-            rgba_to_i420(self.width(), self.height(), buf, &mut self.bgra);
+            //派宝改动：旋转数据具体操作
+            self.tmp_bgra.resize(self.width() * self.height() * 4, 0);
+            //如果self.rotation不为负数，需重新获取
+            if self.rotation == 360 {
+                if let Some(temp) = get_rotation() {
+                    self.rotation = temp;
+                }
+            }
+            if self.rotation == 360 {
+                self.rotation = 0;
+            }
+            if self.rotation > 0 {
+                unsafe {
+                    ARGBRotate(
+                        buf.as_ptr(),
+                        if self.rotation % 180 == 0 {
+                            4 * self.width() as i32
+                        } else {
+                            4 * self.height() as i32
+                        },
+                        self.tmp_bgra.as_mut_ptr(),
+                        4 * self.width() as i32,
+                        if self.rotation % 180 == 0 {
+                            self.width() as i32
+                        } else {
+                            self.height() as i32
+                        },
+                        if self.rotation % 180 == 0 {
+                            self.height() as i32
+                        } else {
+                            self.width() as i32
+                        },
+                        self.rotation as i32,
+                    );
+                }
+                rgba_to_i420(self.width(), self.height(), &self.tmp_bgra, &mut self.bgra);
+            } else {
+                rgba_to_i420(self.width(), self.height(), buf, &mut self.bgra);
+            }
+            //改动结束
             Ok(Frame::RAW(&self.bgra))
         } else {
             return Err(io::ErrorKind::WouldBlock.into());
@@ -144,3 +192,16 @@ fn get_size() -> Option<(u16, u16, u16)> {
     }
     None
 }
+
+//派宝改动：与Android端交互获取旋转角度
+fn get_rotation() -> Option<u16> {
+    let res = call_main_service_get_by_name("rotation").ok()?;
+    if let Ok(json) = serde_json::from_str::<HashMap<String, Value>>(&res) {
+        if let Some(Value::Number(rotation)) = json.get("rotation") {
+            let rotation = rotation.as_i64()? as _;
+            return Some(rotation);
+        }
+    }
+    Some(0)
+}
+//改动结束
