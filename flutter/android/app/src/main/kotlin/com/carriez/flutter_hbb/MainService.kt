@@ -108,9 +108,10 @@ class MainService : Service() {
             }
             //派宝改动：判断是否售货机，指定旋转角度270，否则为0不需要旋转
             "rotation" -> {
-                val androidModel = android.os.Build.MODEL
-                val rotation = if (androidModel == "rk3399-all") 270 else 0
-                rotation
+                val rotation = if (ifVendingMachine) 270 else 0
+                JSONObject().apply {
+                    put("rotation", rotation)
+                }.toString()
             }
             //改动结束
             else -> ""
