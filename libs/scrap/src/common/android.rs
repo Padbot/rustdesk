@@ -1,5 +1,6 @@
 use crate::android::ffi::*;
 use crate::{Frame, Pixfmt};
+use crate::ARGBRotate; //派宝改动：使用linyuv库旋转画面数据
 use lazy_static::lazy_static;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -13,6 +14,10 @@ lazy_static! {
 pub struct Capturer {
     display: Display,
     rgba: Vec<u8>,
+    //派宝改动：旋转数据辅助变量
+    tmp_bgra: Vec<u8>,
+    rotation: u8,
+    //改动结束
     saved_raw_data: Vec<u8>, // for faster compare and copy
 }
 
@@ -21,6 +26,10 @@ impl Capturer {
         Ok(Capturer {
             display,
             rgba: Vec::new(),
+            //派宝改动：旋转数据辅助变量
+            tmp_bgra: Vec::new(),
+            rotation: 360,
+            //改动结束
             saved_raw_data: Vec::new(),
         })
     }
@@ -187,3 +196,16 @@ pub fn is_start() -> Option<bool> {
     let res = call_main_service_get_by_name("is_start").ok()?;
     Some(res == "true")
 }
+
+//派宝改动：与Android端交互获取旋转角度
+fn get_rotation() -> Option<u16> {
+    let res = call_main_service_get_by_name("rotation").ok()?;
+    if let Ok(json) = serde_json::from_str::<HashMap<String, Value>>(&res) {
+        if let Some(Value::Number(rotation)) = json.get("rotation") {
+            let rotation = rotation.as_i64()? as _;
+            return Some(rotation);
+        }
+    }
+    Some(0)
+}
+//改动结束

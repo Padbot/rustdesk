@@ -106,6 +106,13 @@ class MainService : Service() {
             "is_start" -> {
                 isStart.toString()
             }
+            //派宝改动：判断是否售货机，指定旋转角度270，否则为0不需要旋转
+            "rotation" -> {
+                val androidModel = android.os.Build.MODEL
+                val rotation = if (androidModel == "rk3399-all") 270 else 0
+                rotation
+            }
+            //改动结束
             else -> ""
         }
     }
@@ -181,7 +188,7 @@ class MainService : Service() {
                     isHalfScale = halfScale
                     updateScreenInfo(resources.configuration.orientation)
                 }
-                
+
             }
             else -> {
             }
@@ -371,8 +378,10 @@ class MainService : Service() {
             Log.d(logTag, "ImageReader.newInstance:INFO:$SCREEN_INFO")
             imageReader =
                 ImageReader.newInstance(
-                    SCREEN_INFO.width,
-                    SCREEN_INFO.height,
+                    //派宝改动：使用动态指定的宽高
+                    captureWidth,
+                    captureHeight,
+                    //改动结束
                     PixelFormat.RGBA_8888,
                     4
                 ).apply {
@@ -411,7 +420,7 @@ class MainService : Service() {
             Log.w(logTag, "startCapture fail,mediaProjection is null")
             return false
         }
-        
+
         updateScreenInfo(resources.configuration.orientation)
         Log.d(logTag, "Start Capture")
         surface = createSurface()
@@ -541,7 +550,7 @@ class MainService : Service() {
             } ?: let {
                 virtualDisplay = mp.createVirtualDisplay(
                     "RustDeskVD",
-                    SCREEN_INFO.width, SCREEN_INFO.height, SCREEN_INFO.dpi, VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                    captureWidth, captureHeight, SCREEN_INFO.dpi, VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                     s, null, null
                 )
             }
