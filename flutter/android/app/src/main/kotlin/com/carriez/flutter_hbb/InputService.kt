@@ -195,6 +195,7 @@ class InputService : AccessibilityService() {
 
     private fun startGesture(x: Int, y: Int) {
         touchPath = Path()
+        touchGestureBuilder = GestureDescription.Builder()
         touchPath.moveTo(x.toFloat(), y.toFloat())
         lastTouchGestureStartTime = System.currentTimeMillis()
     }
@@ -204,6 +205,7 @@ class InputService : AccessibilityService() {
         val strokeDescription =
             GestureDescription.StrokeDescription(touchPath, 0, 100, true) // 设置willContinue为true
         touchGestureBuilder.addStroke(strokeDescription)
+        dispatchGesture(touchGestureBuilder.build(), null, null)
     }
 
     /**
@@ -262,10 +264,9 @@ class InputService : AccessibilityService() {
                 duration,
                 false
             )
-            val builder = GestureDescription.Builder()
-            builder.addStroke(stroke)
+            touchGestureBuilder.addStroke(stroke)
             Log.d(logTag, "end gesture x:$x y:$y time:$duration")
-            dispatchGesture(builder.build(), null, null)
+            dispatchGesture(touchGestureBuilder.build(), null, null)
         } catch (e: Exception) {
             Log.e(logTag, "endGesture error:$e")
         }
