@@ -32,6 +32,7 @@ const val WHEEL_STEP = 120
 const val WHEEL_DURATION = 50L
 const val LONG_TAP_DELAY = 200L
 
+@RequiresApi(Build.VERSION_CODES.O)
 class InputService : AccessibilityService() {
 
     companion object {
@@ -43,6 +44,7 @@ class InputService : AccessibilityService() {
     private val logTag = "input service"
     private var leftIsDown = false
     private var touchPath = Path()
+    private var touchGestureBuilder = GestureDescription.Builder()
     private var lastTouchGestureStartTime = 0L
     private var mouseX = 0
     private var mouseY = 0
@@ -53,7 +55,6 @@ class InputService : AccessibilityService() {
     private var isWheelActionsPolling = false
     private var isWaitingLongPress = false
 
-    @RequiresApi(Build.VERSION_CODES.N)
     fun onMouseInput(mask: Int, _x: Int, _y: Int) {
         val x = max(0, _x)
         val y = max(0, _y)
@@ -171,7 +172,6 @@ class InputService : AccessibilityService() {
         }
     }
 
-    @RequiresApi(Build.VERSION_CODES.N)
     private fun consumeWheelActions() {
         if (isWheelActionsPolling) {
             return
@@ -201,23 +201,28 @@ class InputService : AccessibilityService() {
 
     private fun continueGesture(x: Int, y: Int) {
         touchPath.lineTo(x.toFloat(), y.toFloat())
+        val strokeDescription =
+            GestureDescription.StrokeDescription(touchPath, 0, 100, true) // 设置willContinue为true
+        touchGestureBuilder.addStroke(strokeDescription)
     }
 
     /**
      * 模拟放大手势
      */
-    @RequiresApi(Build.VERSION_CODES.N)
     private fun performGestureZoomIn(x: Float, y: Float) {
         // 创建一个手势路径
-        val path = Path()
-        path.moveTo(x - 50, y) // 第一个手指初始位置
-        path.lineTo(x - 150, y) // 第一个手指滑动位置
-        path.moveTo(x + 50, y) // 第二个手指初始位置
-        path.lineTo(x + 150, y) // 第二个手指滑动位置
+        val path1 = Path()
+        path1.moveTo(x - 50, y) // 第一个手指初始位置
+        path1.lineTo(x - 150, y) // 第一个手指滑动位置
+        val path2 = Path()
+        path2.moveTo(x + 50, y) // 第二个手指初始位置
+        path2.lineTo(x + 150, y) // 第二个手指滑动位置
 
         // 创建手势描述
         val gestureBuilder = GestureDescription.Builder()
-        gestureBuilder.addStroke(GestureDescription.StrokeDescription(path, 0, 500))
+        gestureBuilder.addStroke(GestureDescription.StrokeDescription(path1, 0, 500))
+        gestureBuilder.addStroke(GestureDescription.StrokeDescription(path2, 0, 500))
+
 
         // 发送手势事件
         val gestureDescription = gestureBuilder.build()
@@ -227,7 +232,6 @@ class InputService : AccessibilityService() {
     /**
      * 模拟缩小手势
      */
-    @RequiresApi(Build.VERSION_CODES.N)
     private fun performGestureZoomOut(x: Float, y: Float) {
         // 创建一个手势路径
         val path = Path()
@@ -245,7 +249,6 @@ class InputService : AccessibilityService() {
         dispatchGesture(gestureDescription, null, null)
     }
 
-    @RequiresApi(Build.VERSION_CODES.N)
     private fun endGesture(x: Int, y: Int) {
         try {
             touchPath.lineTo(x.toFloat(), y.toFloat())
@@ -256,7 +259,8 @@ class InputService : AccessibilityService() {
             val stroke = GestureDescription.StrokeDescription(
                 touchPath,
                 0,
-                duration
+                duration,
+                false
             )
             val builder = GestureDescription.Builder()
             builder.addStroke(stroke)
