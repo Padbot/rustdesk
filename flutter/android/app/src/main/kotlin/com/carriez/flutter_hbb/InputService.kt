@@ -202,10 +202,24 @@ class InputService : AccessibilityService() {
 
     private fun continueGesture(x: Int, y: Int) {
         touchPath.lineTo(x.toFloat(), y.toFloat())
+        var duration = System.currentTimeMillis() - lastTouchGestureStartTime
+        if (duration <= 0) {
+            duration = 1
+        }
         val strokeDescription =
-            GestureDescription.StrokeDescription(touchPath, 0, 100, true) // 设置willContinue为true
+            GestureDescription.StrokeDescription(
+                touchPath,
+                0,
+                duration,
+                true
+            ) // 设置willContinue为true
         touchGestureBuilder.addStroke(strokeDescription)
+
+        lastTouchGestureStartTime = System.currentTimeMillis()
         dispatchGesture(touchGestureBuilder.build(), null, null)
+
+        touchPath = Path()
+        touchPath.moveTo(x.toFloat(), y.toFloat())
     }
 
     /**
