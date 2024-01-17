@@ -51,8 +51,7 @@ class RawTouchGestureDetectorRegion extends StatefulWidget {
   });
 
   @override
-  State<RawTouchGestureDetectorRegion> createState() =>
-      _RawTouchGestureDetectorRegionState();
+  State<RawTouchGestureDetectorRegion> createState() => _RawTouchGestureDetectorRegionState();
 }
 
 /// touchMode only:
@@ -64,8 +63,7 @@ class RawTouchGestureDetectorRegion extends StatefulWidget {
 /// mouseMode only:
 ///   DoubleFiner -> right click
 ///   HoldDrag -> left drag
-class _RawTouchGestureDetectorRegionState
-    extends State<RawTouchGestureDetectorRegion> {
+class _RawTouchGestureDetectorRegionState extends State<RawTouchGestureDetectorRegion> {
   Offset _cacheLongPressPosition = Offset(0, 0);
   double _mouseScrollIntegral = 0; // mouse scroll speed controller
   double _scale = 1;
@@ -158,8 +156,7 @@ class _RawTouchGestureDetectorRegionState
       return;
     }
     if (handleTouch) {
-      ffi.cursorModel
-          .move(_cacheLongPressPosition.dx, _cacheLongPressPosition.dy);
+      ffi.cursorModel.move(_cacheLongPressPosition.dx, _cacheLongPressPosition.dy);
     }
     inputModel.tap(MouseButtons.right);
   }
@@ -222,8 +219,7 @@ class _RawTouchGestureDetectorRegionState
       final offset = ffi.cursorModel.offset;
       final cursorX = offset.dx;
       final cursorY = offset.dy;
-      final visible =
-          ffi.cursorModel.getVisibleRect().inflate(1); // extend edges
+      final visible = ffi.cursorModel.getVisibleRect().inflate(1); // extend edges
       final size = MediaQueryData.fromView(View.of(context)).size;
       if (!visible.contains(Offset(cursorX, cursorY))) {
         ffi.cursorModel.move(size.width / 2, size.height / 2);
@@ -295,40 +291,35 @@ class _RawTouchGestureDetectorRegionState
   }
 
   get onHoldDragCancel => null;
-  get onThreeFingerVerticalDragUpdate => ffi.ffiModel.isPeerAndroid
-      ? null
-      : (d) {
-          _mouseScrollIntegral += d.delta.dy / 4;
-          if (_mouseScrollIntegral > 1) {
-            inputModel.scroll(1);
-            _mouseScrollIntegral = 0;
-          } else if (_mouseScrollIntegral < -1) {
-            inputModel.scroll(-1);
-            _mouseScrollIntegral = 0;
-          }
-        };
+  get onThreeFingerVerticalDragUpdate => (d) {
+        _mouseScrollIntegral += d.delta.dy / 4;
+        if (_mouseScrollIntegral > 1) {
+          inputModel.scroll(1);
+          _mouseScrollIntegral = 0;
+        } else if (_mouseScrollIntegral < -1) {
+          inputModel.scroll(-1);
+          _mouseScrollIntegral = 0;
+        }
+      };
 
   makeGestures(BuildContext context) {
     return <Type, GestureRecognizerFactory>{
       // Official
-      TapGestureRecognizer:
-          GestureRecognizerFactoryWithHandlers<TapGestureRecognizer>(
-              () => TapGestureRecognizer(), (instance) {
+      TapGestureRecognizer: GestureRecognizerFactoryWithHandlers<TapGestureRecognizer>(
+          () => TapGestureRecognizer(), (instance) {
         instance
           ..onTapDown = onTapDown
           ..onTapUp = onTapUp
           ..onTap = onTap;
       }),
-      DoubleTapGestureRecognizer:
-          GestureRecognizerFactoryWithHandlers<DoubleTapGestureRecognizer>(
-              () => DoubleTapGestureRecognizer(), (instance) {
+      DoubleTapGestureRecognizer: GestureRecognizerFactoryWithHandlers<DoubleTapGestureRecognizer>(
+          () => DoubleTapGestureRecognizer(), (instance) {
         instance
           ..onDoubleTapDown = onDoubleTapDown
           ..onDoubleTap = onDoubleTap;
       }),
-      LongPressGestureRecognizer:
-          GestureRecognizerFactoryWithHandlers<LongPressGestureRecognizer>(
-              () => LongPressGestureRecognizer(), (instance) {
+      LongPressGestureRecognizer: GestureRecognizerFactoryWithHandlers<LongPressGestureRecognizer>(
+          () => LongPressGestureRecognizer(), (instance) {
         instance
           ..onLongPressDown = onLongPressDown
           ..onLongPressUp = onLongPressUp
@@ -353,8 +344,7 @@ class _RawTouchGestureDetectorRegionState
       CustomTouchGestureRecognizer:
           GestureRecognizerFactoryWithHandlers<CustomTouchGestureRecognizer>(
               () => CustomTouchGestureRecognizer(), (instance) {
-        instance.onOneFingerPanStart =
-            (DragStartDetails d) => onOneFingerPanStart(context, d);
+        instance.onOneFingerPanStart = (DragStartDetails d) => onOneFingerPanStart(context, d);
         instance
           ..onOneFingerPanUpdate = onOneFingerPanUpdate
           ..onOneFingerPanEnd = onOneFingerPanEnd
