@@ -91,11 +91,6 @@ class InputService : AccessibilityService() {
             return
         }
 
-        // left down ,was down
-        if (leftIsDown) {
-            continueGesture(mouseX, mouseY)
-        }
-
         // left up ,was down
         if (mask == LIFT_UP) {
             if (leftIsDown) {
@@ -104,6 +99,11 @@ class InputService : AccessibilityService() {
                 endGesture(mouseX, mouseY)
                 return
             }
+        }
+
+        // left down ,was down
+        if (leftIsDown) {
+            continueGesture(mouseX, mouseY)
         }
 
 //        if (mask == RIGHT_UP) {
