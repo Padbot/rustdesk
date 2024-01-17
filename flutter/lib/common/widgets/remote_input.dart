@@ -295,9 +295,7 @@ class _RawTouchGestureDetectorRegionState
   }
 
   get onHoldDragCancel => null;
-  get onThreeFingerVerticalDragUpdate => ffi.ffiModel.isPeerAndroid
-      ? null
-      : (d) {
+  get onThreeFingerVerticalDragUpdate => (d) {
           _mouseScrollIntegral += d.delta.dy / 4;
           if (_mouseScrollIntegral > 1) {
             inputModel.scroll(1);
