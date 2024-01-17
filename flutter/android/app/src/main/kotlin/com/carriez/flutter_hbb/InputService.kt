@@ -13,7 +13,9 @@ import android.os.Build
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import androidx.annotation.RequiresApi
-import java.util.*
+import java.util.LinkedList
+import java.util.Timer
+import java.util.TimerTask
 import kotlin.math.abs
 import kotlin.math.max
 
@@ -63,7 +65,7 @@ class InputService : AccessibilityService() {
             mouseY = y * SCREEN_INFO.scale
             if (isWaitingLongPress) {
                 val delta = abs(oldX - mouseX) + abs(oldY - mouseY)
-                Log.d(logTag,"delta:$delta")
+                Log.d(logTag, "delta:$delta")
                 if (delta > 8) {
                     isWaitingLongPress = false
                 }
@@ -103,10 +105,10 @@ class InputService : AccessibilityService() {
             }
         }
 
-        if (mask == RIGHT_UP) {
-            performGlobalAction(GLOBAL_ACTION_BACK)
-            return
-        }
+//        if (mask == RIGHT_UP) {
+//             performGlobalAction(GLOBAL_ACTION_BACK)
+//            return
+//        }
 
         // long WHEEL_BUTTON_DOWN -> GLOBAL_ACTION_RECENTS
         if (mask == WHEEL_BUTTON_DOWN) {
@@ -130,40 +132,42 @@ class InputService : AccessibilityService() {
         }
 
         if (mask == WHEEL_DOWN) {
-            if (mouseY < WHEEL_STEP) {
-                return
-            }
-            val path = Path()
-            path.moveTo(mouseX.toFloat(), mouseY.toFloat())
-            path.lineTo(mouseX.toFloat(), (mouseY - WHEEL_STEP).toFloat())
-            val stroke = GestureDescription.StrokeDescription(
-                path,
-                0,
-                WHEEL_DURATION
-            )
-            val builder = GestureDescription.Builder()
-            builder.addStroke(stroke)
-            wheelActionsQueue.offer(builder.build())
-            consumeWheelActions()
-
+//            if (mouseY < WHEEL_STEP) {
+//                return
+//            }
+//            val path = Path()
+//            path.moveTo(mouseX.toFloat(), mouseY.toFloat())
+//            path.lineTo(mouseX.toFloat(), (mouseY - WHEEL_STEP).toFloat())
+//            val stroke = GestureDescription.StrokeDescription(
+//                path,
+//                0,
+//                WHEEL_DURATION
+//            )
+//            val builder = GestureDescription.Builder()
+//            builder.addStroke(stroke)
+//            wheelActionsQueue.offer(builder.build())
+//            consumeWheelActions()
+            performGestureZoomOut(x.toFloat(), y.toFloat())
         }
 
         if (mask == WHEEL_UP) {
-            if (mouseY < WHEEL_STEP) {
-                return
-            }
-            val path = Path()
-            path.moveTo(mouseX.toFloat(), mouseY.toFloat())
-            path.lineTo(mouseX.toFloat(), (mouseY + WHEEL_STEP).toFloat())
-            val stroke = GestureDescription.StrokeDescription(
-                path,
-                0,
-                WHEEL_DURATION
-            )
-            val builder = GestureDescription.Builder()
-            builder.addStroke(stroke)
-            wheelActionsQueue.offer(builder.build())
-            consumeWheelActions()
+//            if (mouseY < WHEEL_STEP) {
+//                return
+//            }
+//            val path = Path()
+//            path.moveTo(mouseX.toFloat(), mouseY.toFloat())
+//            path.lineTo(mouseX.toFloat(), (mouseY + WHEEL_STEP).toFloat())
+//            val stroke = GestureDescription.StrokeDescription(
+//                path,
+//                0,
+//                WHEEL_DURATION
+//            )
+//            val builder = GestureDescription.Builder()
+//            builder.addStroke(stroke)
+//            wheelActionsQueue.offer(builder.build())
+//            consumeWheelActions()
+//            performGlobalAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)
+            performGestureZoomIn(x.toFloat(), y.toFloat())
         }
     }
 
@@ -197,6 +201,48 @@ class InputService : AccessibilityService() {
 
     private fun continueGesture(x: Int, y: Int) {
         touchPath.lineTo(x.toFloat(), y.toFloat())
+    }
+
+    /**
+     * 模拟放大手势
+     */
+    @RequiresApi(Build.VERSION_CODES.N)
+    private fun performGestureZoomIn(x: Float, y: Float) {
+        // 创建一个手势路径
+        val path = Path()
+        path.moveTo(x - 50, y) // 第一个手指初始位置
+        path.lineTo(x - 150, y) // 第一个手指滑动位置
+        path.moveTo(x + 50, y) // 第二个手指初始位置
+        path.lineTo(x + 150, y) // 第二个手指滑动位置
+
+        // 创建手势描述
+        val gestureBuilder = GestureDescription.Builder()
+        gestureBuilder.addStroke(GestureDescription.StrokeDescription(path, 0, 500))
+
+        // 发送手势事件
+        val gestureDescription = gestureBuilder.build()
+        dispatchGesture(gestureDescription, null, null)
+    }
+
+    /**
+     * 模拟缩小手势
+     */
+    @RequiresApi(Build.VERSION_CODES.N)
+    private fun performGestureZoomOut(x: Float, y: Float) {
+        // 创建一个手势路径
+        val path = Path()
+        path.moveTo(x - 150, y) // 第一个手指初始位置
+        path.lineTo(x - 50, y) // 第一个手指滑动位置
+        path.moveTo(x + 150, y) // 第二个手指初始位置
+        path.lineTo(x + 50, y) // 第二个手指滑动位置
+
+        // 创建手势描述
+        val gestureBuilder = GestureDescription.Builder()
+        gestureBuilder.addStroke(GestureDescription.StrokeDescription(path, 0, 500))
+
+        // 发送手势事件
+        val gestureDescription = gestureBuilder.build()
+        dispatchGesture(gestureDescription, null, null)
     }
 
     @RequiresApi(Build.VERSION_CODES.N)
