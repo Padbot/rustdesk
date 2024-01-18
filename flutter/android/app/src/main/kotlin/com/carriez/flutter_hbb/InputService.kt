@@ -56,15 +56,20 @@ class InputService : AccessibilityService() {
     private var isWaitingLongPress = false
 
     fun onMouseInput(mask: Int, _x: Int, _y: Int) {
+        Log.d(logTag, "mask:$mask x:$_x y:$_y")
         val x = max(0, _x)
         val y = max(0, _y)
 
         if (mask == 0 || mask == LIFT_MOVE) {
+            Log.d(logTag, "LIFT_MOVE or mask == 0")
+            Log.d(logTag, "last----mouseX:$mouseX mouseY:$mouseY")
             val oldX = mouseX
             val oldY = mouseY
             mouseX = x * SCREEN_INFO.scale
             mouseY = y * SCREEN_INFO.scale
+            Log.d(logTag, "new----mouseX:$mouseX mouseY:$mouseY")
             if (isWaitingLongPress) {
+                Log.d(logTag, "isWaitingLongPress")
                 val delta = abs(oldX - mouseX) + abs(oldY - mouseY)
                 Log.d(logTag, "delta:$delta")
                 if (delta > 8) {
@@ -75,6 +80,7 @@ class InputService : AccessibilityService() {
 
         // left button down ,was up
         if (mask == LIFT_DOWN) {
+            Log.d(logTag, "LIFT_DOWN")
             isWaitingLongPress = true
             timer.schedule(object : TimerTask() {
                 override fun run() {
@@ -93,7 +99,9 @@ class InputService : AccessibilityService() {
 
         // left up ,was down
         if (mask == LIFT_UP) {
+            Log.d(logTag, "LIFT_UP")
             if (leftIsDown) {
+                Log.d(logTag, "leftIsDown")
                 leftIsDown = false
                 isWaitingLongPress = false
                 endGesture(mouseX, mouseY)
@@ -103,6 +111,7 @@ class InputService : AccessibilityService() {
 
         // left down ,was down
         if (leftIsDown) {
+            Log.d(logTag, "leftIsDown")
             continueGesture(mouseX, mouseY)
         }
 
@@ -194,6 +203,7 @@ class InputService : AccessibilityService() {
     }
 
     private fun startGesture(x: Int, y: Int) {
+        Log.d(logTag, "start gesture x:$x y:$y")
         touchPath = Path()
         touchGestureBuilder = GestureDescription.Builder()
         touchPath.moveTo(x.toFloat(), y.toFloat())
@@ -201,8 +211,10 @@ class InputService : AccessibilityService() {
     }
 
     private fun continueGesture(x: Int, y: Int) {
+        Log.d(logTag, "continue gesture x:$x y:$y")
         touchPath.lineTo(x.toFloat(), y.toFloat())
         var duration = System.currentTimeMillis() - lastTouchGestureStartTime
+        Log.d(logTag, "duration:$duration")
         if (duration <= 0) {
             duration = 1
         }
@@ -210,7 +222,7 @@ class InputService : AccessibilityService() {
             GestureDescription.StrokeDescription(
                 touchPath,
                 0,
-                duration,
+                1,
                 true
             ) // 设置willContinue为true
         touchGestureBuilder.addStroke(strokeDescription)
@@ -275,8 +287,7 @@ class InputService : AccessibilityService() {
             val stroke = GestureDescription.StrokeDescription(
                 touchPath,
                 0,
-                duration,
-                false
+                duration
             )
             touchGestureBuilder.addStroke(stroke)
             Log.d(logTag, "end gesture x:$x y:$y time:$duration")
