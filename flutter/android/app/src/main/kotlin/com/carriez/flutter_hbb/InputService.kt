@@ -326,10 +326,6 @@ class InputService : AccessibilityService() {
     }
 
     private fun endGesture(x: Int, y: Int) {
-        if (mouseX == lastMouseX && mouseY == lastMouseY) {
-            //防止二次点击
-            return
-        }
         try {
             touchPath.moveTo(lastMouseX.toFloat(), lastMouseY.toFloat())
             touchPath.lineTo(x.toFloat(), y.toFloat())
