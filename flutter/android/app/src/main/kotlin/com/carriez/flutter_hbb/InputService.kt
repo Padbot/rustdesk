@@ -60,12 +60,7 @@ class InputService : AccessibilityService() {
     private var isWaitingLongPress = false
 
     private var performClickTimer: Timer? = null
-    private var performClickTask: TimerTask? = object : TimerTask() {
-        override fun run() {
-            tap(mouseX, mouseY)
-            clicked = true
-        }
-    }
+    private var performClickTask: TimerTask? = null
     private var clicked = false
 
     fun onMouseInput(mask: Int, _x: Int, _y: Int) {
@@ -94,9 +89,16 @@ class InputService : AccessibilityService() {
                 }
             }
             if (performClickTimer == null && lastMouseX != mouseX && lastMouseY != mouseY) {
+                Log.d(logTag, "start performClickTimer")
                 performClickTimer = Timer()
                 clicked = false
                 lastTouchGestureStartTime = System.currentTimeMillis()
+                performClickTask = object : TimerTask() {
+                    override fun run() {
+                        tap(mouseX, mouseY)
+                        clicked = true
+                    }
+                }
                 performClickTimer?.schedule(performClickTask, TAP_DELAY)
             }
         }
@@ -127,6 +129,7 @@ class InputService : AccessibilityService() {
         // left up ,was down
         if (mask == LIFT_UP) {
             Log.d(logTag, "LIFT_UP")
+            performClickTimer?.cancel()
             performClickTimer = null
             if (leftIsDown) {
                 Log.d(logTag, "leftIsDown")
@@ -349,6 +352,7 @@ class InputService : AccessibilityService() {
     private fun tap(x: Int, y: Int) {
         val path = Path()
         path.moveTo(x.toFloat(), y.toFloat())
+        path.lineTo(x.toFloat(), y.toFloat())
         val stroke = GestureDescription.StrokeDescription(
             path,
             0,
