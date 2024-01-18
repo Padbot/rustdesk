@@ -70,15 +70,15 @@ class InputService : AccessibilityService() {
 
         if (mask == 0 || mask == LIFT_MOVE) {
             Log.d(logTag, "LIFT_MOVE or mask == 0")
-            Log.d(logTag, "last----lastMouseX:$lastMouseX lastMouseY:$lastMouseY")
-            Log.d(logTag, "old----mouseX:$mouseX mouseY:$mouseY")
+            Log.d(logTag, "last----($lastMouseX,$lastMouseY)")
+            Log.d(logTag, "old----($mouseX,$mouseY)")
             val oldX = mouseX
             val oldY = mouseY
             mouseX = x * SCREEN_INFO.scale
             mouseY = y * SCREEN_INFO.scale
             lastMouseX = oldX
             lastMouseY = oldY
-            Log.d(logTag, "new----mouseX:$mouseX mouseY:$mouseY")
+            Log.d(logTag, "new----($mouseX,$mouseY)")
             if (isWaitingLongPress) {
                 Log.d(logTag, "isWaitingLongPress")
                 val delta = abs(oldX - mouseX) + abs(oldY - mouseY)
@@ -132,7 +132,7 @@ class InputService : AccessibilityService() {
             performClickTimer?.cancel()
             performClickTimer = null
             if (leftIsDown) {
-                Log.d(logTag, "leftIsDown")
+                Log.d(logTag, "LIFT_UP - leftIsDown")
                 leftIsDown = false
                 isWaitingLongPress = false
                 endGesture(mouseX, mouseY)
@@ -243,7 +243,7 @@ class InputService : AccessibilityService() {
     }
 
     private fun startGesture(x: Int, y: Int) {
-        Log.d(logTag, "start gesture x:$x y:$y")
+        Log.d(logTag, "start gesture ($x,$y)")
         touchPath = Path()
         touchPath.moveTo(x.toFloat(), y.toFloat())
         val strokeDescription = GestureDescription.StrokeDescription(
@@ -258,12 +258,9 @@ class InputService : AccessibilityService() {
     }
 
     private fun continueGesture(x: Int, y: Int) {
-        Log.d(logTag, "continue gesture x:$x y:$y")
-
         //构建手势路径
         touchPath.lineTo(x.toFloat(), y.toFloat())
         var duration = System.currentTimeMillis() - lastTouchGestureStartTime
-        Log.d(logTag, "duration:$duration")
         if (duration <= 0) {
             duration = 1
         }
@@ -275,6 +272,10 @@ class InputService : AccessibilityService() {
         touchGestureBuilder = GestureDescription.Builder()
         touchGestureBuilder.addStroke(strokeDescription)
         lastTouchGestureStartTime = System.currentTimeMillis()
+        Log.d(
+            logTag,
+            "continue gesture from ($lastMouseX,$lastMouseY) to ($x,$y), duration:$duration"
+        )
         dispatchGesture(touchGestureBuilder.build(), null, null)
 
         //重置手势路径
@@ -330,7 +331,6 @@ class InputService : AccessibilityService() {
             touchPath.moveTo(lastMouseX.toFloat(), lastMouseY.toFloat())
             touchPath.lineTo(x.toFloat(), y.toFloat())
             var duration = System.currentTimeMillis() - lastTouchGestureStartTime
-            Log.d(logTag, "end duration:$duration")
             if (duration <= 0) {
                 duration = 1
             }
@@ -338,7 +338,10 @@ class InputService : AccessibilityService() {
                 touchPath, 0, duration * 3, false
             )
             touchGestureBuilder.addStroke(stroke)
-            Log.d(logTag, "end gesture x:$x y:$y time:$duration")
+            Log.d(
+                logTag,
+                "end duration: from ($lastMouseX,$lastMouseY) to ($x,$y),duration:$duration"
+            )
             dispatchGesture(touchGestureBuilder.build(), null, null)
         } catch (e: Exception) {
             Log.e(logTag, "endGesture error:$e")
@@ -346,6 +349,7 @@ class InputService : AccessibilityService() {
     }
 
     private fun tap(x: Int, y: Int) {
+        Log.d(logTag, "perform tap at ($x,$y)")
         val path = Path()
         path.moveTo(x.toFloat(), y.toFloat())
         path.lineTo(x.toFloat(), y.toFloat())
