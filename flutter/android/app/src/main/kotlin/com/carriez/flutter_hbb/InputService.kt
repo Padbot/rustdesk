@@ -222,7 +222,7 @@ class InputService : AccessibilityService() {
             GestureDescription.StrokeDescription(
                 touchPath,
                 0,
-                1,
+                duration,
                 true
             ) // 设置willContinue为true
         touchGestureBuilder.addStroke(strokeDescription)
@@ -232,6 +232,7 @@ class InputService : AccessibilityService() {
 
         touchPath = Path()
         touchPath.moveTo(x.toFloat(), y.toFloat())
+        touchGestureBuilder = GestureDescription.Builder()
     }
 
     /**
@@ -287,7 +288,8 @@ class InputService : AccessibilityService() {
             val stroke = GestureDescription.StrokeDescription(
                 touchPath,
                 0,
-                duration
+                duration,
+                false
             )
             touchGestureBuilder.addStroke(stroke)
             Log.d(logTag, "end gesture x:$x y:$y time:$duration")
