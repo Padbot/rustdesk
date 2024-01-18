@@ -62,7 +62,7 @@ class InputService : AccessibilityService() {
     private var performClickTimer: Timer? = null
     private var performClickTask: TimerTask? = object : TimerTask() {
         override fun run() {
-            endGesture(mouseX, mouseY)
+            tap(mouseX, mouseY)
             clicked = true
         }
     }
@@ -96,6 +96,7 @@ class InputService : AccessibilityService() {
             if (performClickTimer == null && lastMouseX != mouseX && lastMouseY != mouseY) {
                 performClickTimer = Timer()
                 clicked = false
+                lastTouchGestureStartTime = System.currentTimeMillis()
                 performClickTimer?.schedule(performClickTask, TAP_DELAY)
             }
         }
@@ -343,6 +344,19 @@ class InputService : AccessibilityService() {
         } catch (e: Exception) {
             Log.e(logTag, "endGesture error:$e")
         }
+    }
+
+    private fun tap(x: Int, y: Int) {
+        val path = Path()
+        path.moveTo(x.toFloat(), y.toFloat())
+        val stroke = GestureDescription.StrokeDescription(
+            path,
+            0,
+            1
+        )
+        val builder = GestureDescription.Builder()
+        builder.addStroke(stroke)
+        dispatchGesture(builder.build(), null, null)
     }
 
     override fun onServiceConnected() {
