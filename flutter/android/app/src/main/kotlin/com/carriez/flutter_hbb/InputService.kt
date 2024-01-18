@@ -48,6 +48,8 @@ class InputService : AccessibilityService() {
     private var lastTouchGestureStartTime = 0L
     private var mouseX = 0
     private var mouseY = 0
+    private var lastMouseX = 0
+    private var lastMouseY = 0
     private var timer = Timer()
     private var recentActionTask: TimerTask? = null
 
@@ -67,6 +69,8 @@ class InputService : AccessibilityService() {
             val oldY = mouseY
             mouseX = x * SCREEN_INFO.scale
             mouseY = y * SCREEN_INFO.scale
+            lastMouseX = oldX
+            lastMouseY = oldY
             Log.d(logTag, "new----mouseX:$mouseX mouseY:$mouseY")
             if (isWaitingLongPress) {
                 Log.d(logTag, "isWaitingLongPress")
@@ -280,18 +284,12 @@ class InputService : AccessibilityService() {
 
     private fun endGesture(x: Int, y: Int) {
         try {
+            touchPath.moveTo(lastMouseX.toFloat(), lastMouseY.toFloat())
             touchPath.lineTo(x.toFloat(), y.toFloat())
             var duration = System.currentTimeMillis() - lastTouchGestureStartTime
             Log.d(logTag, "end duration:$duration")
             if (duration <= 0) {
                 duration = 1
-            }
-
-            if (duration <= 1) {
-                //添加惯性尾巴
-                val x1 = (mouseX + (mouseX - x) * 10).toFloat()
-                val y1 = (mouseY + (mouseY - y) * 10).toFloat()
-                touchPath.lineTo(x1, y1)
             }
             val stroke = GestureDescription.StrokeDescription(
                 touchPath,
