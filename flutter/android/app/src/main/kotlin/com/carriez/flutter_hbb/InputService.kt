@@ -64,9 +64,10 @@ class InputService : AccessibilityService() {
         override fun run() {
             if (isWaitingLongPress) return
             endGesture(mouseX, mouseY)
-            performClickTimer = null
+            clicked = true
         }
     }
+    private var clicked = false
 
     fun onMouseInput(mask: Int, _x: Int, _y: Int) {
         Log.d(logTag, "mask:$mask x:$_x y:$_y")
@@ -94,6 +95,7 @@ class InputService : AccessibilityService() {
             }
             if (performClickTimer == null && lastMouseX != mouseX && lastMouseY != mouseY) {
                 performClickTimer = Timer()
+                clicked = false
                 performClickTimer?.schedule(performClickTask, TAP_DELAY)
             }
         }
@@ -101,6 +103,9 @@ class InputService : AccessibilityService() {
         // left button down ,was up
         if (mask == LIFT_DOWN) {
             Log.d(logTag, "LIFT_DOWN")
+            if (clicked) {
+                return
+            }
             isWaitingLongPress = true
             timer.schedule(object : TimerTask() {
                 override fun run() {
@@ -120,6 +125,7 @@ class InputService : AccessibilityService() {
         // left up ,was down
         if (mask == LIFT_UP) {
             Log.d(logTag, "LIFT_UP")
+            performClickTimer = null
             if (leftIsDown) {
                 Log.d(logTag, "leftIsDown")
                 leftIsDown = false
@@ -139,7 +145,7 @@ class InputService : AccessibilityService() {
             return
         }
 
-        if (isWaitingLongPress){
+        if (isWaitingLongPress) {
             return
         }
 
