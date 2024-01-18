@@ -124,8 +124,8 @@ class InputService : AccessibilityService() {
             if (leftIsDown) {
                 Log.d(logTag, "LIFT_UP - leftIsDown")
                 leftIsDown = false
-                isWaitingLongPress = false
                 endGesture(mouseX, mouseY)
+                isWaitingLongPress = false
                 return
             }
         }
@@ -325,7 +325,7 @@ class InputService : AccessibilityService() {
                 duration = 1
             }
             val stroke = GestureDescription.StrokeDescription(
-                touchPath, 0, duration * 3, false
+                touchPath, 0, duration * (if (isWaitingLongPress) 1 else 3), false
             )
             touchGestureBuilder = GestureDescription.Builder()
             touchGestureBuilder.addStroke(stroke)
