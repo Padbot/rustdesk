@@ -294,7 +294,7 @@ class InputService : AccessibilityService() {
             val stroke = GestureDescription.StrokeDescription(
                 touchPath,
                 0,
-                duration,
+                duration * 5,
                 false
             )
             touchGestureBuilder.addStroke(stroke)
