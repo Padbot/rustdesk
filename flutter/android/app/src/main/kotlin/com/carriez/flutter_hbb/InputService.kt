@@ -234,8 +234,8 @@ class InputService : AccessibilityService() {
         lastTouchGestureStartTime = System.currentTimeMillis()
         dispatchGesture(touchGestureBuilder.build(), null, null)
 
-        touchPath = Path()
-        touchPath.moveTo(x.toFloat(), y.toFloat())
+//        touchPath = Path()
+//        touchPath.moveTo(x.toFloat(), y.toFloat())
         touchGestureBuilder = GestureDescription.Builder()
     }
 
