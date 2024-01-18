@@ -62,7 +62,6 @@ class InputService : AccessibilityService() {
     private var performClickTimer: Timer? = null
     private var performClickTask: TimerTask? = object : TimerTask() {
         override fun run() {
-            if (isWaitingLongPress) return
             endGesture(mouseX, mouseY)
             clicked = true
         }
@@ -91,6 +90,7 @@ class InputService : AccessibilityService() {
                 Log.d(logTag, "delta:$delta")
                 if (delta > 8) {
                     isWaitingLongPress = false
+                    performClickTimer?.cancel()
                 }
             }
             if (performClickTimer == null && lastMouseX != mouseX && lastMouseY != mouseY) {
@@ -106,6 +106,7 @@ class InputService : AccessibilityService() {
             if (clicked) {
                 return
             }
+            performClickTimer?.cancel()
             isWaitingLongPress = true
             timer.schedule(object : TimerTask() {
                 override fun run() {
