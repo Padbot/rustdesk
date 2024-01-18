@@ -111,16 +111,6 @@ class InputService : AccessibilityService() {
             }
             performClickTimer?.cancel()
             isWaitingLongPress = true
-            timer.schedule(object : TimerTask() {
-                override fun run() {
-                    if (isWaitingLongPress) {
-                        isWaitingLongPress = false
-                        leftIsDown = false
-                        endGesture(mouseX, mouseY)
-                    }
-                }
-            }, LONG_TAP_DELAY * 4)
-
             leftIsDown = true
             startGesture(mouseX, mouseY)
             return
