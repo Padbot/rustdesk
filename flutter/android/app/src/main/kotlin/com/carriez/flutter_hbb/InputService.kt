@@ -22,6 +22,7 @@ import kotlin.math.max
 const val LIFT_DOWN = 9
 const val LIFT_MOVE = 8
 const val LIFT_UP = 10
+const val RIGHT_DOWN = 17
 const val RIGHT_UP = 18
 const val WHEEL_BUTTON_DOWN = 33
 const val WHEEL_BUTTON_UP = 34
@@ -31,6 +32,7 @@ const val WHEEL_UP = 963
 const val WHEEL_STEP = 120
 const val WHEEL_DURATION = 50L
 const val LONG_TAP_DELAY = 200L
+const val TAP_DELAY = 120L
 
 @RequiresApi(Build.VERSION_CODES.O)
 class InputService : AccessibilityService() {
@@ -57,6 +59,15 @@ class InputService : AccessibilityService() {
     private var isWheelActionsPolling = false
     private var isWaitingLongPress = false
 
+    private var performClickTimer: Timer? = null
+    private var performClickTask: TimerTask? = object : TimerTask() {
+        override fun run() {
+            if (isWaitingLongPress) return
+            endGesture(mouseX, mouseY)
+            performClickTimer = null
+        }
+    }
+
     fun onMouseInput(mask: Int, _x: Int, _y: Int) {
         Log.d(logTag, "mask:$mask x:$_x y:$_y")
         val x = max(0, _x)
@@ -64,7 +75,8 @@ class InputService : AccessibilityService() {
 
         if (mask == 0 || mask == LIFT_MOVE) {
             Log.d(logTag, "LIFT_MOVE or mask == 0")
-            Log.d(logTag, "last----mouseX:$mouseX mouseY:$mouseY")
+            Log.d(logTag, "last----lastMouseX:$lastMouseX lastMouseY:$lastMouseY")
+            Log.d(logTag, "old----mouseX:$mouseX mouseY:$mouseY")
             val oldX = mouseX
             val oldY = mouseY
             mouseX = x * SCREEN_INFO.scale
@@ -79,6 +91,10 @@ class InputService : AccessibilityService() {
                 if (delta > 8) {
                     isWaitingLongPress = false
                 }
+            }
+            if (performClickTimer == null && lastMouseX != mouseX && lastMouseY != mouseY) {
+                performClickTimer = Timer()
+                performClickTimer?.schedule(performClickTask, TAP_DELAY)
             }
         }
 
@@ -113,16 +129,25 @@ class InputService : AccessibilityService() {
             }
         }
 
+        if (mask == RIGHT_DOWN) {
+            Log.d(logTag, "RIGHT_DOWN")
+            return
+        }
+
+        if (mask == RIGHT_UP) {
+            Log.d(logTag, "RIGHT_UP")
+            return
+        }
+
+        if (isWaitingLongPress){
+            return
+        }
+
         // left down ,was down
         if (leftIsDown) {
             Log.d(logTag, "leftIsDown")
             continueGesture(mouseX, mouseY)
         }
-
-//        if (mask == RIGHT_UP) {
-//             performGlobalAction(GLOBAL_ACTION_BACK)
-//            return
-//        }
 
         // long WHEEL_BUTTON_DOWN -> GLOBAL_ACTION_RECENTS
         if (mask == WHEEL_BUTTON_DOWN) {
@@ -209,34 +234,41 @@ class InputService : AccessibilityService() {
     private fun startGesture(x: Int, y: Int) {
         Log.d(logTag, "start gesture x:$x y:$y")
         touchPath = Path()
-        touchGestureBuilder = GestureDescription.Builder()
         touchPath.moveTo(x.toFloat(), y.toFloat())
+        val strokeDescription = GestureDescription.StrokeDescription(
+            touchPath, 0, 1, true
+        ) // 设置willContinue为true
+
+        //构建并发送手势
+        touchGestureBuilder = GestureDescription.Builder()
+        touchGestureBuilder.addStroke(strokeDescription)
         lastTouchGestureStartTime = System.currentTimeMillis()
+        dispatchGesture(touchGestureBuilder.build(), null, null)
     }
 
     private fun continueGesture(x: Int, y: Int) {
         Log.d(logTag, "continue gesture x:$x y:$y")
+
+        //构建手势路径
         touchPath.lineTo(x.toFloat(), y.toFloat())
         var duration = System.currentTimeMillis() - lastTouchGestureStartTime
         Log.d(logTag, "duration:$duration")
         if (duration <= 0) {
             duration = 1
         }
-        val strokeDescription =
-            GestureDescription.StrokeDescription(
-                touchPath,
-                0,
-                duration,
-                true
-            ) // 设置willContinue为true
-        touchGestureBuilder.addStroke(strokeDescription)
+        val strokeDescription = GestureDescription.StrokeDescription(
+            touchPath, 0, duration, true
+        ) // 设置willContinue为true
 
+        //构建并发送手势
+        touchGestureBuilder = GestureDescription.Builder()
+        touchGestureBuilder.addStroke(strokeDescription)
         lastTouchGestureStartTime = System.currentTimeMillis()
         dispatchGesture(touchGestureBuilder.build(), null, null)
 
-//        touchPath = Path()
-//        touchPath.moveTo(x.toFloat(), y.toFloat())
-        touchGestureBuilder = GestureDescription.Builder()
+        //重置手势路径
+        touchPath = Path()
+        touchPath.moveTo(x.toFloat(), y.toFloat())
     }
 
     /**
@@ -283,6 +315,10 @@ class InputService : AccessibilityService() {
     }
 
     private fun endGesture(x: Int, y: Int) {
+        if (mouseX == lastMouseX && mouseY == lastMouseY) {
+            //防止二次点击
+            return
+        }
         try {
             touchPath.moveTo(lastMouseX.toFloat(), lastMouseY.toFloat())
             touchPath.lineTo(x.toFloat(), y.toFloat())
@@ -292,10 +328,7 @@ class InputService : AccessibilityService() {
                 duration = 1
             }
             val stroke = GestureDescription.StrokeDescription(
-                touchPath,
-                0,
-                duration * 3,
-                false
+                touchPath, 0, duration * 3, false
             )
             touchGestureBuilder.addStroke(stroke)
             Log.d(logTag, "end gesture x:$x y:$y time:$duration")
