@@ -282,8 +282,16 @@ class InputService : AccessibilityService() {
         try {
             touchPath.lineTo(x.toFloat(), y.toFloat())
             var duration = System.currentTimeMillis() - lastTouchGestureStartTime
+            Log.d(logTag, "end duration:$duration")
             if (duration <= 0) {
                 duration = 1
+            }
+
+            if (duration <= 1) {
+                //添加惯性尾巴
+                val x1 = (mouseX + (mouseX - x) * 10).toFloat()
+                val y1 = (mouseY + (mouseY - y) * 10).toFloat()
+                touchPath.lineTo(x1, y1)
             }
             val stroke = GestureDescription.StrokeDescription(
                 touchPath,
