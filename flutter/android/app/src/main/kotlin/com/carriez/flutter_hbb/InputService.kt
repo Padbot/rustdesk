@@ -130,13 +130,9 @@ class InputService : AccessibilityService() {
             }
         }
 
-        if (mask == RIGHT_DOWN) {
-            Log.d(logTag, "RIGHT_DOWN")
-            return
-        }
-
         if (mask == RIGHT_UP) {
             Log.d(logTag, "RIGHT_UP")
+            if (!isWaitingLongPress) performGlobalAction(GLOBAL_ACTION_BACK)
             return
         }
 
