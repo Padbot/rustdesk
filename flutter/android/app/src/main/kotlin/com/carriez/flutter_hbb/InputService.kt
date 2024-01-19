@@ -147,7 +147,7 @@ class InputService : AccessibilityService() {
         // left down ,was down
         if (leftIsDown) {
             Log.d(logTag, "leftIsDown")
-            continueGesture(mouseX, mouseY)
+            continueGesture(lastMouseX, lastMouseY)
         }
 
         // long WHEEL_BUTTON_DOWN -> GLOBAL_ACTION_RECENTS
@@ -264,7 +264,7 @@ class InputService : AccessibilityService() {
         lastTouchGestureStartTime = System.currentTimeMillis()
         Log.d(
             logTag,
-            "continue gesture from ($lastMouseX,$lastMouseY) to ($x,$y), duration:$duration"
+            "continue gesture to ($lastMouseX,$lastMouseY), duration:$duration"
         )
         dispatchGesture(touchGestureBuilder.build(), null, null)
 
@@ -318,7 +318,6 @@ class InputService : AccessibilityService() {
 
     private fun endGesture(x: Int, y: Int) {
         try {
-            touchPath.moveTo(lastMouseX.toFloat(), lastMouseY.toFloat())
             touchPath.lineTo(x.toFloat(), y.toFloat())
             var duration = System.currentTimeMillis() - lastTouchGestureStartTime
             if (duration <= 0) {
