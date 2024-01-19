@@ -325,7 +325,7 @@ class InputService : AccessibilityService() {
                 duration = 1
             }
             val stroke = GestureDescription.StrokeDescription(
-                touchPath, 0, duration * (if (isWaitingLongPress) 1 else 3), false
+                touchPath, 0, (if (isWaitingLongPress) 1 else duration * 3), false
             )
             touchGestureBuilder = GestureDescription.Builder()
             touchGestureBuilder.addStroke(stroke)
