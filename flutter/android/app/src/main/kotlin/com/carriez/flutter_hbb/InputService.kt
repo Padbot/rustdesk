@@ -109,6 +109,10 @@ class InputService : AccessibilityService() {
         // left button down ,was up
         if (mask == LIFT_DOWN) {
             Log.d(logTag, "LIFT_DOWN")
+            if (System.currentTimeMillis() - lastClickUpTime < 10) {
+                Log.d(logTag, "double click blocked")
+                return
+            }
 //            if (clicked) {
 //                return
 //            }
@@ -122,10 +126,6 @@ class InputService : AccessibilityService() {
         // left up ,was down
         if (mask == LIFT_UP) {
             Log.d(logTag, "LIFT_UP")
-            if (System.currentTimeMillis() - lastClickUpTime < 10) {
-                Log.d(logTag, "double click blocked")
-                return
-            }
             lastClickUpTime = System.currentTimeMillis()
 //            performClickTimer?.cancel()
 //            performClickTimer = null
