@@ -59,9 +59,12 @@ class InputService : AccessibilityService() {
     private var isWheelActionsPolling = false
     private var isWaitingLongPress = false
 
-    private var performClickTimer: Timer? = null
-    private var performClickTask: TimerTask? = null
-    private var clicked = false
+//    private var performClickTimer: Timer? = null
+//    private var performClickTask: TimerTask? = null
+//    private var clicked = false
+
+    //防止双击
+    private var lastClickUpTime = 0L
 
     fun onMouseInput(mask: Int, _x: Int, _y: Int) {
         Log.d(logTag, "mask:$mask x:$_x y:$_y")
@@ -85,31 +88,31 @@ class InputService : AccessibilityService() {
                 Log.d(logTag, "delta:$delta")
                 if (delta > 8) {
                     isWaitingLongPress = false
-                    performClickTimer?.cancel()
+//                    performClickTimer?.cancel()
                 }
             }
-            if (performClickTimer == null && lastMouseX != mouseX && lastMouseY != mouseY) {
-                Log.d(logTag, "start performClickTimer")
-                performClickTimer = Timer()
-                clicked = false
-                lastTouchGestureStartTime = System.currentTimeMillis()
-                performClickTask = object : TimerTask() {
-                    override fun run() {
-                        tap(mouseX, mouseY)
-                        clicked = true
-                    }
-                }
-                performClickTimer?.schedule(performClickTask, TAP_DELAY)
-            }
+//            if (performClickTimer == null && lastMouseX != mouseX && lastMouseY != mouseY) {
+//                Log.d(logTag, "start performClickTimer")
+//                performClickTimer = Timer()
+//                clicked = false
+//                lastTouchGestureStartTime = System.currentTimeMillis()
+//                performClickTask = object : TimerTask() {
+//                    override fun run() {
+//                        tap(mouseX, mouseY)
+//                        clicked = true
+//                    }
+//                }
+//                performClickTimer?.schedule(performClickTask, TAP_DELAY)
+//            }
         }
 
         // left button down ,was up
         if (mask == LIFT_DOWN) {
             Log.d(logTag, "LIFT_DOWN")
-            if (clicked) {
-                return
-            }
-            performClickTimer?.cancel()
+//            if (clicked) {
+//                return
+//            }
+//            performClickTimer?.cancel()
             isWaitingLongPress = true
             leftIsDown = true
             startGesture(mouseX, mouseY)
@@ -119,8 +122,13 @@ class InputService : AccessibilityService() {
         // left up ,was down
         if (mask == LIFT_UP) {
             Log.d(logTag, "LIFT_UP")
-            performClickTimer?.cancel()
-            performClickTimer = null
+            if (System.currentTimeMillis() - lastClickUpTime < 10) {
+                Log.d(logTag, "double click blocked")
+                return
+            }
+            lastClickUpTime = System.currentTimeMillis()
+//            performClickTimer?.cancel()
+//            performClickTimer = null
             if (leftIsDown) {
                 Log.d(logTag, "LIFT_UP - leftIsDown")
                 leftIsDown = false
@@ -168,42 +176,40 @@ class InputService : AccessibilityService() {
         }
 
         if (mask == WHEEL_DOWN) {
-//            if (mouseY < WHEEL_STEP) {
-//                return
-//            }
-//            val path = Path()
-//            path.moveTo(mouseX.toFloat(), mouseY.toFloat())
-//            path.lineTo(mouseX.toFloat(), (mouseY - WHEEL_STEP).toFloat())
-//            val stroke = GestureDescription.StrokeDescription(
-//                path,
-//                0,
-//                WHEEL_DURATION
-//            )
-//            val builder = GestureDescription.Builder()
-//            builder.addStroke(stroke)
-//            wheelActionsQueue.offer(builder.build())
-//            consumeWheelActions()
-            performGestureZoomOut(x.toFloat(), y.toFloat())
+            if (mouseY < WHEEL_STEP) {
+                return
+            }
+            val path = Path()
+            path.moveTo(mouseX.toFloat(), mouseY.toFloat())
+            path.lineTo(mouseX.toFloat(), (mouseY - WHEEL_STEP).toFloat())
+            val stroke = GestureDescription.StrokeDescription(
+                path,
+                0,
+                WHEEL_DURATION
+            )
+            val builder = GestureDescription.Builder()
+            builder.addStroke(stroke)
+            wheelActionsQueue.offer(builder.build())
+            consumeWheelActions()
+//            performGestureZoomOut(x.toFloat(), y.toFloat())
         }
 
         if (mask == WHEEL_UP) {
-//            if (mouseY < WHEEL_STEP) {
-//                return
-//            }
-//            val path = Path()
-//            path.moveTo(mouseX.toFloat(), mouseY.toFloat())
-//            path.lineTo(mouseX.toFloat(), (mouseY + WHEEL_STEP).toFloat())
-//            val stroke = GestureDescription.StrokeDescription(
-//                path,
-//                0,
-//                WHEEL_DURATION
-//            )
-//            val builder = GestureDescription.Builder()
-//            builder.addStroke(stroke)
-//            wheelActionsQueue.offer(builder.build())
-//            consumeWheelActions()
-//            performGlobalAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)
-            performGestureZoomIn(x.toFloat(), y.toFloat())
+            if (mouseY < WHEEL_STEP) {
+                return
+            }
+            val path = Path()
+            path.moveTo(mouseX.toFloat(), mouseY.toFloat())
+            path.lineTo(mouseX.toFloat(), (mouseY + WHEEL_STEP).toFloat())
+            val stroke = GestureDescription.StrokeDescription(
+                path,
+                0,
+                WHEEL_DURATION
+            )
+            val builder = GestureDescription.Builder()
+            builder.addStroke(stroke)
+            wheelActionsQueue.offer(builder.build())
+            consumeWheelActions()
         }
     }
 
