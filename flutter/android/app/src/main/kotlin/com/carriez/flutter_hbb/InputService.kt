@@ -253,7 +253,7 @@ class InputService : AccessibilityService() {
         if (duration <= 0) {
             duration = 1
         }
-        continuedStroke.continueStroke(touchPath, 0, duration, true)
+        continuedStroke = continuedStroke.continueStroke(touchPath, 0, duration, true)
 
         //构建并发送手势
         lastTouchGestureStartTime = System.currentTimeMillis()
@@ -318,7 +318,7 @@ class InputService : AccessibilityService() {
             if (duration <= 0) {
                 duration = 1
             }
-            continuedStroke.continueStroke(
+            continuedStroke = continuedStroke.continueStroke(
                 touchPath, 0, (if (isWaitingLongPress) 1 else duration * 3), false
             )
             Log.d(
