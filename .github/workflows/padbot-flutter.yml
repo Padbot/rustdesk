@@ -1,10 +1,10 @@
-name: Flutter PadBot Build
+name: PadBot Flutter Build
 
 on:
   workflow_dispatch:
 
 jobs:
-  run-flutter-nightly-build:
+  run-padbot-flutter-build:
     uses: ./.github/workflows/flutter-android.yml
     secrets: inherit
     with:
