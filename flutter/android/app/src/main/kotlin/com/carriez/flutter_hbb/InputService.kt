@@ -29,6 +29,13 @@ const val WHEEL_BUTTON_UP = 34
 const val WHEEL_DOWN = 523331
 const val WHEEL_UP = 963
 
+const val TOUCH_SCALE_START = 1
+const val TOUCH_SCALE = 2
+const val TOUCH_SCALE_END = 3
+const val TOUCH_PAN_START = 4
+const val TOUCH_PAN_UPDATE = 5
+const val TOUCH_PAN_END = 6
+
 const val WHEEL_STEP = 120
 const val WHEEL_DURATION = 50L
 const val LONG_TAP_DELAY = 200L
@@ -213,6 +220,34 @@ class InputService : AccessibilityService() {
         }
     }
 
+    @RequiresApi(Build.VERSION_CODES.N)
+    fun onTouchInput(mask: Int, _x: Int, _y: Int) {
+        when (mask) {
+            TOUCH_PAN_UPDATE -> {
+                mouseX -= _x * SCREEN_INFO.scale
+                mouseY -= _y * SCREEN_INFO.scale
+                mouseX = max(0, mouseX);
+                mouseY = max(0, mouseY);
+                continueGesture(mouseX, mouseY)
+            }
+
+            TOUCH_PAN_START -> {
+                mouseX = max(0, _x) * SCREEN_INFO.scale
+                mouseY = max(0, _y) * SCREEN_INFO.scale
+                startGesture(mouseX, mouseY)
+            }
+
+            TOUCH_PAN_END -> {
+                endGesture(mouseX, mouseY)
+                mouseX = max(0, _x) * SCREEN_INFO.scale
+                mouseY = max(0, _y) * SCREEN_INFO.scale
+            }
+
+            else -> {}
+        }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.N)
     private fun consumeWheelActions() {
         if (isWheelActionsPolling) {
             return
@@ -257,7 +292,7 @@ class InputService : AccessibilityService() {
             duration = 1
         }
         continuedStroke = continuedStroke?.continueStroke(
-            touchPath, 0, duration, true
+            touchPath, 0, 1, true
         ) // 设置willContinue为true
 
         //构建并发送手势
@@ -337,7 +372,7 @@ class InputService : AccessibilityService() {
                     duration = 1
                 }
                 continuedStroke = continuedStroke?.continueStroke(
-                    touchPath, 0, 30, false
+                    touchPath, 0, duration * 3, false
                 )
                 Log.d(
                     logTag,
