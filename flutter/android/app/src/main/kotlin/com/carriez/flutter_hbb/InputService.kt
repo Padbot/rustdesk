@@ -320,20 +320,30 @@ class InputService : AccessibilityService() {
 
     private fun endGesture(x: Int, y: Int) {
         try {
-            touchPath.moveTo(lastMouseX.toFloat(), lastMouseY.toFloat())
-            touchPath.lineTo(x.toFloat(), y.toFloat())
             var duration = System.currentTimeMillis() - lastTouchGestureStartTime
-            if (duration <= 0) {
-                duration = 1
+            if (isWaitingLongPress) {
+                continuedStroke = continuedStroke?.continueStroke(
+                    touchPath, 0, 1, false
+                )
+                Log.d(
+                    logTag,
+                    "end duration: from ($lastMouseX,$lastMouseY) to ($x,$y),duration:$duration"
+                )
+            } else {
+                val extendX = x + (x - lastMouseX)
+                val extendY = y + (y - lastMouseY)
+                touchPath.lineTo(extendX.toFloat(), extendY.toFloat())
+                if (duration <= 0) {
+                    duration = 1
+                }
+                continuedStroke = continuedStroke?.continueStroke(
+                    touchPath, 0, duration * 3, false
+                )
+                Log.d(
+                    logTag,
+                    "end duration: from ($x,$y) to ($extendX,$extendY),duration:$duration"
+                )
             }
-            continuedStroke = continuedStroke?.continueStroke(
-                touchPath, 0, (if (isWaitingLongPress) 1 else duration * 3), false
-            )
-
-            Log.d(
-                logTag,
-                "end duration: from ($lastMouseX,$lastMouseY) to ($x,$y),duration:$duration"
-            )
             continuedStroke?.let {
                 dispatchGesture(GestureDescription.Builder().addStroke(it).build(), null, null)
             }
