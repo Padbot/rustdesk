@@ -230,16 +230,19 @@ class InputService : AccessibilityService() {
                 mouseY = max(0, mouseY);
                 continueGesture(mouseX, mouseY)
             }
+
             TOUCH_PAN_START -> {
                 mouseX = max(0, _x) * SCREEN_INFO.scale
                 mouseY = max(0, _y) * SCREEN_INFO.scale
                 startGesture(mouseX, mouseY)
             }
+
             TOUCH_PAN_END -> {
                 endGesture(mouseX, mouseY)
                 mouseX = max(0, _x) * SCREEN_INFO.scale
                 mouseY = max(0, _y) * SCREEN_INFO.scale
             }
+
             else -> {}
         }
     }
@@ -289,7 +292,7 @@ class InputService : AccessibilityService() {
             duration = 1
         }
         continuedStroke = continuedStroke?.continueStroke(
-            touchPath, 0, duration, true
+            touchPath, 0, 1, true
         ) // 设置willContinue为true
 
         //构建并发送手势
@@ -369,7 +372,7 @@ class InputService : AccessibilityService() {
                     duration = 1
                 }
                 continuedStroke = continuedStroke?.continueStroke(
-                    touchPath, 0, 30, false
+                    touchPath, 0, duration * 3, false
                 )
                 Log.d(
                     logTag,
