@@ -369,7 +369,7 @@ class InputService : AccessibilityService() {
                     duration = 1
                 }
                 continuedStroke = continuedStroke?.continueStroke(
-                    touchPath, 0, duration * 3, false
+                    touchPath, 0, 30, false
                 )
                 Log.d(
                     logTag,
