@@ -46,7 +46,7 @@ class InputService : AccessibilityService() {
     private val logTag = "input service"
     private var leftIsDown = false
     private var touchPath = Path()
-    private var touchGestureBuilder = GestureDescription.Builder()
+    private var continuedStroke: GestureDescription.StrokeDescription? = null
     private var lastTouchGestureStartTime = 0L
     private var mouseX = 0
     private var mouseY = 0
@@ -238,15 +238,15 @@ class InputService : AccessibilityService() {
         Log.d(logTag, "start gesture ($x,$y)")
         touchPath = Path()
         touchPath.moveTo(x.toFloat(), y.toFloat())
-        val strokeDescription = GestureDescription.StrokeDescription(
+        continuedStroke = GestureDescription.StrokeDescription(
             touchPath, 0, 1, true
         ) // 设置willContinue为true
 
         //构建并发送手势
-        touchGestureBuilder = GestureDescription.Builder()
-        touchGestureBuilder.addStroke(strokeDescription)
         lastTouchGestureStartTime = System.currentTimeMillis()
-        dispatchGesture(touchGestureBuilder.build(), null, null)
+        continuedStroke?.let {
+            dispatchGesture(GestureDescription.Builder().addStroke(it).build(), null, null)
+        }
     }
 
     private fun continueGesture(x: Int, y: Int) {
@@ -256,19 +256,19 @@ class InputService : AccessibilityService() {
         if (duration <= 0) {
             duration = 1
         }
-        val strokeDescription = GestureDescription.StrokeDescription(
+        continuedStroke = continuedStroke?.continueStroke(
             touchPath, 0, duration, true
         ) // 设置willContinue为true
 
         //构建并发送手势
-        touchGestureBuilder = GestureDescription.Builder()
-        touchGestureBuilder.addStroke(strokeDescription)
         lastTouchGestureStartTime = System.currentTimeMillis()
         Log.d(
             logTag,
             "continue gesture from ($lastMouseX,$lastMouseY) to ($x,$y), duration:$duration"
         )
-        dispatchGesture(touchGestureBuilder.build(), null, null)
+        continuedStroke?.let {
+            dispatchGesture(GestureDescription.Builder().addStroke(it).build(), null, null)
+        }
 
         //重置手势路径
         touchPath = Path()
@@ -326,16 +326,17 @@ class InputService : AccessibilityService() {
             if (duration <= 0) {
                 duration = 1
             }
-            val stroke = GestureDescription.StrokeDescription(
+            continuedStroke = continuedStroke?.continueStroke(
                 touchPath, 0, (if (isWaitingLongPress) 1 else duration * 3), false
             )
-            touchGestureBuilder = GestureDescription.Builder()
-            touchGestureBuilder.addStroke(stroke)
+
             Log.d(
                 logTag,
                 "end duration: from ($lastMouseX,$lastMouseY) to ($x,$y),duration:$duration"
             )
-            dispatchGesture(touchGestureBuilder.build(), null, null)
+            continuedStroke?.let {
+                dispatchGesture(GestureDescription.Builder().addStroke(it).build(), null, null)
+            }
         } catch (e: Exception) {
             Log.e(logTag, "endGesture error:$e")
         }
