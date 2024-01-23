@@ -104,6 +104,14 @@ class MainService : Service() {
                     put("scale",SCREEN_INFO.scale)
                 }.toString()
             }
+            //派宝改动：判断是否售货机，指定旋转角度270，否则为0不需要旋转
+            "rotation" -> {
+                val rotation = if (ifVendingMachine) 270 else 0
+                JSONObject().apply {
+                    put("rotation", rotation)
+                }.toString()
+            }
+            //改动结束
             else -> ""
         }
     }
@@ -342,8 +350,10 @@ class MainService : Service() {
             Log.d(logTag, "ImageReader.newInstance:INFO:$SCREEN_INFO")
             imageReader =
                 ImageReader.newInstance(
-                    SCREEN_INFO.width,
-                    SCREEN_INFO.height,
+                    //派宝改动：使用动态指定的宽高
+                    captureWidth,
+                    captureHeight,
+                    //改动结束
                     PixelFormat.RGBA_8888,
                     4
                 ).apply {
@@ -456,7 +466,9 @@ class MainService : Service() {
         }
         virtualDisplay = mp.createVirtualDisplay(
             "RustDeskVD",
-            SCREEN_INFO.width, SCREEN_INFO.height, SCREEN_INFO.dpi, VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+            //派宝改动：使用动态指定的宽高
+            captureWidth, captureHeight, SCREEN_INFO.dpi, VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+            //改动结束
             surface, null, null
         )
     }
@@ -472,7 +484,9 @@ class MainService : Service() {
             it.start()
             virtualDisplay = mp.createVirtualDisplay(
                 "RustDeskVD",
-                SCREEN_INFO.width, SCREEN_INFO.height, SCREEN_INFO.dpi, VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                //派宝改动：使用动态指定的宽高
+                captureWidth, captureHeight, SCREEN_INFO.dpi, VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                //改动结束
                 surface, null, null
             )
         }

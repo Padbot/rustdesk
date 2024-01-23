@@ -1,0 +1,23 @@
+name: Flutter Padbot CI
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths-ignore:
+      - "docs/**"
+      - "README.md"
+  push:
+    branches:
+      - develop
+    paths-ignore:
+      - ".github/**"
+      - "docs/**"
+      - "README.md"
+
+jobs:
+  run-padbot-ci:
+    uses: ./.github/workflows/flutter-android.yml
+    secrets: inherit
+    with:
+      upload-artifact: true
+      upload-tag: "padbot-nightly"
