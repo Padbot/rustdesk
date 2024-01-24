@@ -1,4 +1,4 @@
-name: Flutter Padbot CI
+name: Padbot Flutter CI
 
 on:
   workflow_dispatch:
