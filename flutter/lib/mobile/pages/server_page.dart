@@ -211,11 +211,11 @@ class ServiceNotRunningNotification extends StatelessWidget {
             ElevatedButton.icon(
                 icon: const Icon(Icons.play_arrow),
                 onPressed: () {
-                  if (gFFI.userModel.userName.value.isEmpty && bind.mainGetLocalOption(key: "show-scam-warning") != "N") {
-                    _showScamWarning(context, serverModel);
-                  } else {
-                    serverModel.toggleService();
-                  }
+                  // if (gFFI.userModel.userName.value.isEmpty && bind.mainGetLocalOption(key: "show-scam-warning") != "N") {
+                  //   _showScamWarning(context, serverModel);
+                  // } else {
+                  serverModel.toggleService();
+                  // }
                 },
                 label: Text(translate("Start Service")))
           ],
