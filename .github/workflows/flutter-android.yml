@@ -13,23 +13,25 @@ on:
 env:
   CARGO_NDK_VERSION: "3.1.2"
   LLVM_VERSION: "15.0.6"
-  FLUTTER_VERSION: "3.10.6"
-  FLUTTER_RUST_BRIDGE_VERSION: "1.75.3"
-  # for arm64 linux
-  FLUTTER_ELINUX_VERSION: "3.10.6"
-  FLUTTER_ELINUX_COMMIT_ID: "410b3ca42f2cd0c485edf517a1666652bab442d4"
+  FLUTTER_VERSION: "3.16.9"
+  FLUTTER_RUST_BRIDGE_VERSION: "1.80.1"
+  # for arm64 linux because official Dart SDK does not work
+  FLUTTER_ELINUX_VERSION: "3.16.9"
+  FLUTTER_ELINUX_COMMIT_ID: "c02bd16e1630f5bd690b85c5c2456ac1920e25af"
   TAG_NAME: "${{ inputs.upload-tag }}"
-  # vcpkg version: 2023.04.15
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+  # vcpkg version: 2023.10.19
   # for multiarch gcc compatibility
-  VCPKG_COMMIT_ID: "501db0f17ef6df184fcdbfbe0f87cde2313b6ab1"
-  VERSION: "1.2.3"
-  NDK_VERSION: "r25c"
+  VCPKG_COMMIT_ID: "8eb57355a4ffb410a2e94c07b4dca2dffbee8e50"
+  VERSION: "1.2.4"
+  NDK_VERSION: "r26b"
   #signing keys env variable checks
-  ANDROID_SIGNING_KEY: "${{ secrets.ANDROID_SIGNING_KEY }}"
-  MACOS_P12_BASE64: "${{ secrets.MACOS_P12_BASE64 }}"
+  ANDROID_SIGNING_KEY: '${{ secrets.ANDROID_SIGNING_KEY }}'
+  MACOS_P12_BASE64: '${{ secrets.MACOS_P12_BASE64 }}'
   # To make a custom build with your own servers set the below secret values
-  RS_PUB_KEY: "${{ secrets.RS_PUB_KEY }}"
-  RENDEZVOUS_SERVER: "${{ secrets.RENDEZVOUS_SERVER }}"
+  RS_PUB_KEY: '${{ secrets.RS_PUB_KEY }}'
+  RENDEZVOUS_SERVER: '${{ secrets.RENDEZVOUS_SERVER }}'
+  API_SERVER: '${{ secrets.API_SERVER }}'
   UPLOAD_ARTIFACT: "${{ inputs.upload-artifact }}"
 
 jobs:
@@ -45,24 +47,64 @@ jobs:
       matrix:
         job:
           - {
-              arch: aarch64,
-              target: aarch64-linux-android,
-              os: ubuntu-20.04,
-              extra-build-features: "",
-              openssl-arch: android-arm64,
-            }
+            arch: aarch64,
+            target: aarch64-linux-android,
+            os: ubuntu-20.04,
+            extra-build-features: "",
+            openssl-arch: android-arm64
+          }
           - {
-              arch: armv7,
-              target: armv7-linux-androideabi,
-              os: ubuntu-20.04,
-              extra-build-features: "",
-              openssl-arch: android-arm,
-            }
+            arch: armv7,
+            target: armv7-linux-androideabi,
+            os: ubuntu-20.04,
+            extra-build-features: "",
+            openssl-arch: android-arm
+          }
     steps:
+      - name: Export GitHub Actions cache environment variables
+        uses: actions/github-script@v6
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
       - name: Install dependencies
         run: |
-          sudo apt update
-          sudo apt-get -qq install -y  git curl wget nasm yasm libgtk-3-dev clang libxcb-randr0-dev libxdo-dev libxfixes-dev libxcb-shape0-dev libxcb-xfixes0-dev libasound2-dev libpulse-dev cmake libclang-dev ninja-build libappindicator3-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libvdpau-dev libva-dev libpam0g-dev libclang-dev llvm-dev libclang-10-dev llvm-10-dev pkg-config tree g++ libc6-dev gcc-multilib g++-multilib openjdk-11-jdk-headless
+          sudo apt-get update
+          sudo apt-get install -y \
+               clang \
+               cmake \
+               curl \
+               gcc-multilib \
+               git \
+               g++ \
+               g++-multilib \
+               libappindicator3-dev \
+               libasound2-dev \
+               libc6-dev \
+               libclang-10-dev \
+               libclang-dev \
+               libgstreamer1.0-dev \
+               libgstreamer-plugins-base1.0-dev \
+               libgtk-3-dev \
+               libpam0g-dev \
+               libpulse-dev \
+               libva-dev \
+               libvdpau-dev \
+               libxcb-randr0-dev \
+               libxcb-shape0-dev \
+               libxcb-xfixes0-dev \
+               libxdo-dev \
+               libxfixes-dev \
+               llvm-10-dev \
+               llvm-dev \
+               nasm \
+               ninja-build \
+               openjdk-11-jdk-headless \
+               pkg-config \
+               tree \
+               wget
+
       - name: Checkout source code
         uses: actions/checkout@v3
       - name: Install flutter
@@ -76,11 +118,23 @@ jobs:
           ndk-version: ${{ env.NDK_VERSION }}
           add-to-path: true
 
-      - name: Clone deps
-        shell: bash
+      - name: Setup vcpkg with Github Actions binary cache
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgDirectory: /opt/artifacts/vcpkg
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+
+      - name: Install vcpkg dependencies
         run: |
-          pushd /opt
-          git clone https://github.com/rustdesk-org/rustdesk_thirdparty_lib.git --depth=1
+          case ${{ matrix.job.target }} in
+            aarch64-linux-android)
+              ./flutter/build_android_deps.sh arm64-v8a
+            ;;
+            armv7-linux-androideabi)
+              ./flutter/build_android_deps.sh armeabi-v7a
+            ;;
+          esac
+        shell: bash
 
       - name: Restore bridge files
         uses: actions/download-artifact@master
@@ -89,24 +143,22 @@ jobs:
           path: ./
 
       - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: stable
-          override: true
-          profile: minimal # minimal component installation (ie, no documentation)
+          components: ''
 
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: rustdesk-lib-cache
+          prefix-key: rustdesk-lib-cache-android # TODO: drop '-android' part after caches are invalidated
           key: ${{ matrix.job.target }}-${{ matrix.job.extra-build-features }}
 
       - name: Build rustdesk lib
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
           ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
-          VCPKG_ROOT: /opt/rustdesk_thirdparty_lib/vcpkg
         run: |
-          rustup target add ${{ matrix.job.target }} 
+          rustup target add ${{ matrix.job.target }}
           cargo install cargo-ndk --version ${{ env.CARGO_NDK_VERSION }}
           case ${{ matrix.job.target }} in
             aarch64-linux-android)
@@ -132,7 +184,7 @@ jobs:
           case ${{ matrix.job.target }} in
             aarch64-linux-android)
               mkdir -p ./flutter/android/app/src/main/jniLibs/arm64-v8a
-              cp /opt/rustdesk_thirdparty_lib/android/app/src/main/jniLibs/arm64-v8a/*.so ./flutter/android/app/src/main/jniLibs/arm64-v8a/
+              cp ${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so ./flutter/android/app/src/main/jniLibs/arm64-v8a/
               cp ./target/${{ matrix.job.target }}/release/liblibrustdesk.so ./flutter/android/app/src/main/jniLibs/arm64-v8a/librustdesk.so
               # build flutter
               pushd flutter
@@ -141,7 +193,7 @@ jobs:
             ;;
             armv7-linux-androideabi)
               mkdir -p ./flutter/android/app/src/main/jniLibs/armeabi-v7a
-              cp /opt/rustdesk_thirdparty_lib/android/app/src/main/jniLibs/armeabi-v7a/*.so ./flutter/android/app/src/main/jniLibs/armeabi-v7a/
+              cp ${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/arm-linux-androideabi/libc++_shared.so ./flutter/android/app/src/main/jniLibs/armeabi-v7a/
               cp ./target/${{ matrix.job.target }}/release/liblibrustdesk.so ./flutter/android/app/src/main/jniLibs/armeabi-v7a/librustdesk.so
               # build flutter
               pushd flutter
