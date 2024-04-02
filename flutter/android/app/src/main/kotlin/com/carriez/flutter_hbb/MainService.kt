@@ -92,13 +92,11 @@ class MainService : Service() {
     @Keep
     @RequiresApi(Build.VERSION_CODES.N)
     fun rustKeyEventInput(input: ByteArray) {
-        InputServiceCompat.ctx?.onKeyEvent(input)
-    }
-
-    @Keep
-    @RequiresApi(Build.VERSION_CODES.O)
-    fun rustKeyEventInput(input: ByteArray) {
-        InputService.ctx?.onKeyEvent(input)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            InputService.ctx?.onKeyEvent(input)
+        }else{
+            InputServiceCompat.ctx?.onKeyEvent(input)
+        }
     }
 
     @Keep
