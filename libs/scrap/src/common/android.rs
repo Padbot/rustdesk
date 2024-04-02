@@ -52,7 +52,7 @@ impl crate::TraitCapturer for Capturer {
             // Is it safe to directly return buf without copy?
             self.rgba.resize(buf.len(), 0);
             //派宝改动：旋转数据具体操作
-            self.tmp_bgra.resize(self.width() * self.height() * 4, 0);
+            self.tmp_bgra.resize(buf.len(), 0);
             //如果self.rotation不为负数，需重新获取
             if self.rotation == kRotate0 {
                 if let Some(temp) = get_rotation() {
@@ -88,8 +88,8 @@ impl crate::TraitCapturer for Capturer {
                         },
                         self.rotation,
                     );
-                //rgba_to_i420(self.width(), self.height(), &self.tmp_bgra, &mut self.rgba);
-                //std::ptr::copy_nonoverlapping(&self.tmp_bgra, self.rgba.as_mut_ptr(), buf.len())
+                    //rgba_to_i420(self.width(), self.height(), &self.tmp_bgra, &mut self.rgba);
+                    std::ptr::copy_nonoverlapping(&self.tmp_bgra, &mut self.rgba, buf.len())
                 } else {
                     std::ptr::copy_nonoverlapping(buf.as_ptr(), self.rgba.as_mut_ptr(), buf.len())
                 }
