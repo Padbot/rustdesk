@@ -67,7 +67,7 @@ class MainActivity : FlutterActivity() {
 
     override fun onResume() {
         super.onResume()
-        val inputPer = InputService.isOpen
+        val inputPer = InputService.isOpen || InputServiceCompat.isOpen
         activity.runOnUiThread {
             flutterMethodChannel?.invokeMethod(
                 "on_state_changed",
@@ -183,7 +183,7 @@ class MainActivity : FlutterActivity() {
                 "check_service" -> {
                     Companion.flutterMethodChannel?.invokeMethod(
                         "on_state_changed",
-                        mapOf("name" to "input", "value" to InputService.isOpen.toString())
+                        mapOf("name" to "input", "value" to (InputService.isOpen || InputServiceCompat.isOpen).toString())
                     )
                     Companion.flutterMethodChannel?.invokeMethod(
                         "on_state_changed",
@@ -193,12 +193,16 @@ class MainActivity : FlutterActivity() {
                 }
                 "stop_input" -> {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                        InputServiceCompat.ctx?.disableSelf()
+                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                         InputService.ctx?.disableSelf()
                     }
                     InputService.ctx = null
+                    InputServiceCompat.ctx = null
                     Companion.flutterMethodChannel?.invokeMethod(
                         "on_state_changed",
-                        mapOf("name" to "input", "value" to InputService.isOpen.toString())
+                        mapOf("name" to "input", "value" to (InputService.isOpen || InputServiceCompat.isOpen).toString())
                     )
                     result.success(true)
                 }

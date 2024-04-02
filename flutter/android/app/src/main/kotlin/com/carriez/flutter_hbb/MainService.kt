@@ -77,9 +77,11 @@ class MainService : Service() {
             when (kind) {
                 0 -> { // touch
                     InputService.ctx?.onTouchInput(mask, x, y)
+                    InputServiceCompat.ctx?.onTouchInput(mask, x, y)
                 }
                 1 -> { // mouse
                     InputService.ctx?.onMouseInput(mask, x, y)
+                    InputServiceCompat.ctx?.onMouseInput(mask, x, y)
                 }
                 else -> {
                 }
@@ -89,6 +91,12 @@ class MainService : Service() {
 
     @Keep
     @RequiresApi(Build.VERSION_CODES.N)
+    fun rustKeyEventInput(input: ByteArray) {
+        InputServiceCompat.ctx?.onKeyEvent(input)
+    }
+
+    @Keep
+    @RequiresApi(Build.VERSION_CODES.O)
     fun rustKeyEventInput(input: ByteArray) {
         InputService.ctx?.onKeyEvent(input)
     }
@@ -513,7 +521,7 @@ class MainService : Service() {
         Handler(Looper.getMainLooper()).post {
             MainActivity.flutterMethodChannel?.invokeMethod(
                 "on_state_changed",
-                mapOf("name" to "input", "value" to InputService.isOpen.toString())
+                mapOf("name" to "input", "value" to (InputService.isOpen || InputServiceCompat.isOpen).toString())
             )
         }
         return isReady
