@@ -89,7 +89,7 @@ impl crate::TraitCapturer for Capturer {
                         self.rotation,
                     );
                     //rgba_to_i420(self.width(), self.height(), &self.tmp_bgra, &mut self.rgba);
-                    std::ptr::copy_nonoverlapping(&self.tmp_bgra.as_ptr(), self.rgba.as_mut_ptr(), buf.len())
+                    //std::ptr::copy_nonoverlapping(&self.tmp_bgra.as_ptr(), self.rgba.as_mut_ptr(), buf.len())
                 } else {
                     std::ptr::copy_nonoverlapping(buf.as_ptr(), self.rgba.as_mut_ptr(), buf.len())
                 }
