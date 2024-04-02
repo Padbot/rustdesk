@@ -1,11 +1,13 @@
 use crate::android::ffi::*;
-use crate::rgba_to_i420;
+use crate::{Frame, Pixfmt};
 use crate::ARGBRotate; //派宝改动：使用linyuv库旋转画面数据
 use lazy_static::lazy_static;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::{io, time::Duration};
+use crate::RotationMode::*;
+use crate::RotationMode;
 
 lazy_static! {
     static ref SCREEN_SIZE: Mutex<(u16, u16, u16)> = Mutex::new((0, 0, 0)); // (width, height, scale)
@@ -13,22 +15,22 @@ lazy_static! {
 
 pub struct Capturer {
     display: Display,
-    bgra: Vec<u8>,
+    rgba: Vec<u8>,
     //派宝改动：旋转数据辅助变量
     tmp_bgra: Vec<u8>,
-    rotation: u16,
+    rotation: RotationMode,
     //改动结束
     saved_raw_data: Vec<u8>, // for faster compare and copy
 }
 
 impl Capturer {
-    pub fn new(display: Display, _yuv: bool) -> io::Result<Capturer> {
+    pub fn new(display: Display) -> io::Result<Capturer> {
         Ok(Capturer {
             display,
-            bgra: Vec::new(),
+            rgba: Vec::new(),
             //派宝改动：旋转数据辅助变量
             tmp_bgra: Vec::new(),
-            rotation: 360,
+            rotation: kRotate0,
             //改动结束
             saved_raw_data: Vec::new(),
         })
@@ -44,61 +46,116 @@ impl Capturer {
 }
 
 impl crate::TraitCapturer for Capturer {
-    fn set_use_yuv(&mut self, _use_yuv: bool) {}
-
     fn frame<'a>(&'a mut self, _timeout: Duration) -> io::Result<Frame<'a>> {
         if let Some(buf) = get_video_raw() {
             crate::would_block_if_equal(&mut self.saved_raw_data, buf)?;
+            // Is it safe to directly return buf without copy?
+            self.rgba.resize(buf.len(), 0);
             //派宝改动：旋转数据具体操作
             self.tmp_bgra.resize(self.width() * self.height() * 4, 0);
             //如果self.rotation不为负数，需重新获取
-            if self.rotation == 360 {
+            if self.rotation == kRotate0 {
                 if let Some(temp) = get_rotation() {
-                    self.rotation = temp;
+                    self.rotation = match temp {
+                        0 => kRotate0,
+                        90 => kRotate90,
+                        180 => kRotate180,
+                        270 => kRotate270,
+                        _ => kRotate0
+                    };
                 }
             }
-            if self.rotation == 360 {
-                self.rotation = 0;
-            }
-            if self.rotation > 0 {
-                unsafe {
+            unsafe {
+                if self.rotation != kRotate0 {
                     ARGBRotate(
                         buf.as_ptr(),
-                        if self.rotation % 180 == 0 {
+                        if self.rotation == kRotate180 {
                             4 * self.width() as i32
                         } else {
                             4 * self.height() as i32
                         },
-                        self.tmp_bgra.as_mut_ptr(),
+                        self.rgba.as_mut_ptr(),
                         4 * self.width() as i32,
-                        if self.rotation % 180 == 0 {
+                        if self.rotation == kRotate180 {
                             self.width() as i32
                         } else {
                             self.height() as i32
                         },
-                        if self.rotation % 180 == 0 {
+                        if self.rotation == kRotate180 {
                             self.height() as i32
                         } else {
                             self.width() as i32
                         },
-                        self.rotation as i32,
+                        self.rotation,
                     );
+                //rgba_to_i420(self.width(), self.height(), &self.tmp_bgra, &mut self.rgba);
+                //std::ptr::copy_nonoverlapping(&self.tmp_bgra, self.rgba.as_mut_ptr(), buf.len())
+                } else {
+                    std::ptr::copy_nonoverlapping(buf.as_ptr(), self.rgba.as_mut_ptr(), buf.len())
                 }
-                rgba_to_i420(self.width(), self.height(), &self.tmp_bgra, &mut self.bgra);
-            } else {
-                rgba_to_i420(self.width(), self.height(), buf, &mut self.bgra);
             }
             //改动结束
-            Ok(Frame::RAW(&self.bgra))
+            Ok(Frame::PixelBuffer(PixelBuffer::new(
+                &self.rgba,
+                if self.rotation == kRotate180 {
+                    self.width()
+                } else {
+                    self.height()
+                },
+                if self.rotation == kRotate180 {
+                    self.height()
+                } else {
+                    self.width()
+                },
+            )))
         } else {
             return Err(io::ErrorKind::WouldBlock.into());
         }
     }
 }
 
-pub enum Frame<'a> {
-    RAW(&'a [u8]),
-    Empty,
+
+pub struct PixelBuffer<'a> {
+    data: &'a [u8],
+    width: usize,
+    height: usize,
+    stride: Vec<usize>,
+}
+
+impl<'a> PixelBuffer<'a> {
+    pub fn new(data: &'a [u8], width: usize, height: usize) -> Self {
+        let stride0 = data.len() / height;
+        let mut stride = Vec::new();
+        stride.push(stride0);
+        PixelBuffer {
+            data,
+            width,
+            height,
+            stride,
+        }
+    }
+}
+
+impl<'a> crate::TraitPixelBuffer for PixelBuffer<'a> {
+    fn data(&self) -> &[u8] {
+        self.data
+    }
+
+    fn width(&self) -> usize {
+        self.width
+    }
+
+    fn height(&self) -> usize {
+        self.height
+    }
+
+    fn stride(&self) -> Vec<usize> {
+        self.stride.clone()
+    }
+
+    fn pixfmt(&self) -> Pixfmt {
+        Pixfmt::RGBA
+    }
 }
 
 pub struct Display {
