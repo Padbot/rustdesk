@@ -32,26 +32,6 @@ import hbb.MessageOuterClass.KeyEvent
 import hbb.MessageOuterClass.KeyboardMode
 import hbb.KeyEventConverter
 
-const val LIFT_DOWN = 9
-const val LIFT_MOVE = 8
-const val LIFT_UP = 10
-const val RIGHT_UP = 18
-const val WHEEL_BUTTON_DOWN = 33
-const val WHEEL_BUTTON_UP = 34
-const val WHEEL_DOWN = 523331
-const val WHEEL_UP = 963
-
-const val TOUCH_SCALE_START = 1
-const val TOUCH_SCALE = 2
-const val TOUCH_SCALE_END = 3
-const val TOUCH_PAN_START = 4
-const val TOUCH_PAN_UPDATE = 5
-const val TOUCH_PAN_END = 6
-
-const val WHEEL_STEP = 120
-const val WHEEL_DURATION = 50L
-const val LONG_TAP_DELAY = 200L
-
 class InputServiceCompat : AccessibilityService() {
 
     companion object {
