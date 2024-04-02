@@ -35,6 +35,7 @@ import hbb.KeyEventConverter
 const val LIFT_DOWN = 9
 const val LIFT_MOVE = 8
 const val LIFT_UP = 10
+const val RIGHT_DOWN = 17
 const val RIGHT_UP = 18
 const val WHEEL_BUTTON_DOWN = 33
 const val WHEEL_BUTTON_UP = 34
@@ -51,7 +52,9 @@ const val TOUCH_PAN_END = 6
 const val WHEEL_STEP = 120
 const val WHEEL_DURATION = 50L
 const val LONG_TAP_DELAY = 200L
+const val TAP_DELAY = 120L
 
+@RequiresApi(Build.VERSION_CODES.O)
 class InputService : AccessibilityService() {
 
     companion object {
@@ -63,9 +66,13 @@ class InputService : AccessibilityService() {
     private val logTag = "input service"
     private var leftIsDown = false
     private var touchPath = Path()
+    private var currentStroke: GestureDescription.StrokeDescription? = null
+    private var strokeQueue: LinkedList<GestureDescription.StrokeDescription> = LinkedList()
     private var lastTouchGestureStartTime = 0L
     private var mouseX = 0
     private var mouseY = 0
+    private var lastMouseX = 0
+    private var lastMouseY = 0
     private var timer = Timer()
     private var recentActionTask: TimerTask? = null
 
@@ -75,61 +82,95 @@ class InputService : AccessibilityService() {
 
     private var fakeEditTextForTextStateCalculation: EditText? = null
 
-    @RequiresApi(Build.VERSION_CODES.N)
+    //防止双击
+    private var lastClickUpTime = 0L
+
     fun onMouseInput(mask: Int, _x: Int, _y: Int) {
+        Log.d(logTag, "mask:$mask x:$_x y:$_y")
         val x = max(0, _x)
         val y = max(0, _y)
 
         if (mask == 0 || mask == LIFT_MOVE) {
+            Log.d(logTag, "LIFT_MOVE or mask == 0")
+            Log.d(logTag, "last----($lastMouseX,$lastMouseY)")
+            Log.d(logTag, "old----($mouseX,$mouseY)")
             val oldX = mouseX
             val oldY = mouseY
             mouseX = x * SCREEN_INFO.scale
             mouseY = y * SCREEN_INFO.scale
+            lastMouseX = oldX
+            lastMouseY = oldY
+            Log.d(logTag, "new----($mouseX,$mouseY)")
             if (isWaitingLongPress) {
+                Log.d(logTag, "isWaitingLongPress")
                 val delta = abs(oldX - mouseX) + abs(oldY - mouseY)
-                Log.d(logTag,"delta:$delta")
+                Log.d(logTag, "delta:$delta")
                 if (delta > 8) {
                     isWaitingLongPress = false
+//                    performClickTimer?.cancel()
                 }
             }
+//            if (performClickTimer == null && lastMouseX != mouseX && lastMouseY != mouseY) {
+//                Log.d(logTag, "start performClickTimer")
+//                performClickTimer = Timer()
+//                clicked = false
+//                lastTouchGestureStartTime = System.currentTimeMillis()
+//                performClickTask = object : TimerTask() {
+//                    override fun run() {
+//                        tap(mouseX, mouseY)
+//                        clicked = true
+//                    }
+//                }
+//                performClickTimer?.schedule(performClickTask, TAP_DELAY)
+//            }
         }
 
         // left button down ,was up
         if (mask == LIFT_DOWN) {
+            Log.d(logTag, "LIFT_DOWN")
+            if (System.currentTimeMillis() - lastClickUpTime < 10) {
+                Log.d(logTag, "double click blocked")
+                return
+            }
+//            if (clicked) {
+//                return
+//            }
+//            performClickTimer?.cancel()
             isWaitingLongPress = true
-            timer.schedule(object : TimerTask() {
-                override fun run() {
-                    if (isWaitingLongPress) {
-                        isWaitingLongPress = false
-                        leftIsDown = false
-                        endGesture(mouseX, mouseY)
-                    }
-                }
-            }, LONG_TAP_DELAY * 4)
-
             leftIsDown = true
             startGesture(mouseX, mouseY)
             return
         }
 
-        // left down ,was down
-        if (leftIsDown) {
-            continueGesture(mouseX, mouseY)
-        }
-
         // left up ,was down
         if (mask == LIFT_UP) {
+            Log.d(logTag, "LIFT_UP")
+            lastClickUpTime = System.currentTimeMillis()
+//            performClickTimer?.cancel()
+//            performClickTimer = null
             if (leftIsDown) {
+                Log.d(logTag, "LIFT_UP - leftIsDown")
                 leftIsDown = false
-                isWaitingLongPress = false
                 endGesture(mouseX, mouseY)
+                isWaitingLongPress = false
                 return
             }
         }
 
         if (mask == RIGHT_UP) {
-            performGlobalAction(GLOBAL_ACTION_BACK)
+            Log.d(logTag, "RIGHT_UP")
+            if (!isWaitingLongPress) performGlobalAction(GLOBAL_ACTION_BACK)
             return
+        }
+
+        if (isWaitingLongPress) {
+            return
+        }
+
+        // left down ,was down
+        if (leftIsDown) {
+            Log.d(logTag, "leftIsDown")
+            continueGesture(mouseX, mouseY)
         }
 
         // long WHEEL_BUTTON_DOWN -> GLOBAL_ACTION_RECENTS
@@ -169,7 +210,7 @@ class InputService : AccessibilityService() {
             builder.addStroke(stroke)
             wheelActionsQueue.offer(builder.build())
             consumeWheelActions()
-
+//            performGestureZoomOut(x.toFloat(), y.toFloat())
         }
 
         if (mask == WHEEL_UP) {
@@ -201,16 +242,19 @@ class InputService : AccessibilityService() {
                 mouseY = max(0, mouseY);
                 continueGesture(mouseX, mouseY)
             }
+
             TOUCH_PAN_START -> {
                 mouseX = max(0, _x) * SCREEN_INFO.scale
                 mouseY = max(0, _y) * SCREEN_INFO.scale
                 startGesture(mouseX, mouseY)
             }
+
             TOUCH_PAN_END -> {
                 endGesture(mouseX, mouseY)
                 mouseX = max(0, _x) * SCREEN_INFO.scale
                 mouseY = max(0, _y) * SCREEN_INFO.scale
             }
+
             else -> {}
         }
     }
@@ -237,36 +281,158 @@ class InputService : AccessibilityService() {
         }
     }
 
+    private fun performGesture() {
+        //构建并发送手势
+        strokeQueue.peek()?.let {
+            lastTouchGestureStartTime = System.currentTimeMillis()
+            Log.d(logTag, "continue gesture ${it.path}, duration:${it.duration}")
+            dispatchGesture(
+                GestureDescription.Builder().addStroke(it).build(),
+                object : GestureResultCallback() {
+                    override fun onCompleted(gestureDescription: GestureDescription?) {
+                        super.onCompleted(gestureDescription)
+                        Log.d(logTag, "gesture completed")
+                        strokeQueue.poll()
+                        performGesture()
+                    }
+
+                    override fun onCancelled(gestureDescription: GestureDescription?) {
+                        super.onCancelled(gestureDescription)
+                        Log.d(logTag, "gesture cancelled")
+                        strokeQueue.poll()
+                        performGesture()
+                    }
+                }, null
+            )
+        }
+    }
+
     private fun startGesture(x: Int, y: Int) {
+        Log.d(logTag, "start gesture ($x,$y)")
         touchPath = Path()
         touchPath.moveTo(x.toFloat(), y.toFloat())
-        lastTouchGestureStartTime = System.currentTimeMillis()
+        currentStroke = GestureDescription.StrokeDescription(
+            touchPath, 0, 1, true
+        ) // 设置willContinue为true
+
+        strokeQueue.offer(currentStroke)
+        performGesture()
     }
 
     private fun continueGesture(x: Int, y: Int) {
+        //构建手势路径
         touchPath.lineTo(x.toFloat(), y.toFloat())
+        var duration = System.currentTimeMillis() - lastTouchGestureStartTime
+        if (duration <= 0) {
+            duration = 1
+        }
+        currentStroke = currentStroke?.continueStroke(
+            touchPath, 0, 1, true
+        ) // 设置willContinue为true
+
+        strokeQueue.offer(currentStroke)
+        if (strokeQueue.size <= 1) {
+            Log.d(logTag, "pending, no gesture performing")
+            performGesture()
+        }
+
+        //重置手势路径
+        touchPath = Path()
+        touchPath.moveTo(x.toFloat(), y.toFloat())
     }
 
-    @RequiresApi(Build.VERSION_CODES.N)
+    /**
+     * 模拟放大手势
+     */
+    private fun performGestureZoomIn(x: Float, y: Float) {
+        // 创建一个手势路径
+        val path1 = Path()
+        path1.moveTo(x - 50, y) // 第一个手指初始位置
+        path1.lineTo(x - 150, y) // 第一个手指滑动位置
+        val path2 = Path()
+        path2.moveTo(x + 50, y) // 第二个手指初始位置
+        path2.lineTo(x + 150, y) // 第二个手指滑动位置
+
+        // 创建手势描述
+        val gestureBuilder = GestureDescription.Builder()
+        gestureBuilder.addStroke(GestureDescription.StrokeDescription(path1, 0, 500))
+        gestureBuilder.addStroke(GestureDescription.StrokeDescription(path2, 0, 500))
+
+        // 发送手势事件
+        val gestureDescription = gestureBuilder.build()
+        dispatchGesture(gestureDescription, null, null)
+    }
+
+    /**
+     * 模拟缩小手势
+     */
+    private fun performGestureZoomOut(x: Float, y: Float) {
+        // 创建一个手势路径
+        val path = Path()
+        path.moveTo(x - 150, y) // 第一个手指初始位置
+        path.lineTo(x - 50, y) // 第一个手指滑动位置
+        path.moveTo(x + 150, y) // 第二个手指初始位置
+        path.lineTo(x + 50, y) // 第二个手指滑动位置
+
+        // 创建手势描述
+        val gestureBuilder = GestureDescription.Builder()
+        gestureBuilder.addStroke(GestureDescription.StrokeDescription(path, 0, 500))
+
+        // 发送手势事件
+        val gestureDescription = gestureBuilder.build()
+        dispatchGesture(gestureDescription, null, null)
+    }
+
     private fun endGesture(x: Int, y: Int) {
         try {
-            touchPath.lineTo(x.toFloat(), y.toFloat())
             var duration = System.currentTimeMillis() - lastTouchGestureStartTime
-            if (duration <= 0) {
-                duration = 1
+            if (isWaitingLongPress) {
+                currentStroke = currentStroke?.continueStroke(
+                    touchPath, 0, 1, false
+                )
+                Log.d(
+                    logTag,
+                    "end gesture: from ($lastMouseX,$lastMouseY) to ($x,$y),duration:$duration"
+                )
+            } else {
+                val extendX = x + (x - lastMouseX)
+                val extendY = y + (y - lastMouseY)
+                touchPath.lineTo(extendX.toFloat(), extendY.toFloat())
+                if (duration <= 0) {
+                    duration = 1
+                }
+                currentStroke = currentStroke?.continueStroke(
+                    touchPath, 0, duration * 3, false
+                )
+                Log.d(
+                    logTag,
+                    "end gesture: from ($x,$y) to ($extendX,$extendY),duration:$duration"
+                )
             }
-            val stroke = GestureDescription.StrokeDescription(
-                touchPath,
-                0,
-                duration
-            )
-            val builder = GestureDescription.Builder()
-            builder.addStroke(stroke)
-            Log.d(logTag, "end gesture x:$x y:$y time:$duration")
-            dispatchGesture(builder.build(), null, null)
+
+            strokeQueue.offer(currentStroke)
+            if (strokeQueue.size <= 1) {
+                Log.d(logTag, "end gesture: no gesture performing")
+                performGesture()
+            }
         } catch (e: Exception) {
             Log.e(logTag, "endGesture error:$e")
         }
+    }
+
+    private fun tap(x: Int, y: Int) {
+        Log.d(logTag, "perform tap at ($x,$y)")
+        val path = Path()
+        path.moveTo(x.toFloat(), y.toFloat())
+        path.lineTo(x.toFloat(), y.toFloat())
+        val stroke = GestureDescription.StrokeDescription(
+            path,
+            0,
+            1
+        )
+        val builder = GestureDescription.Builder()
+        builder.addStroke(stroke)
+        dispatchGesture(builder.build(), null, null)
     }
 
     @RequiresApi(Build.VERSION_CODES.N)
