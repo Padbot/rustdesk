@@ -60,7 +60,7 @@ impl crate::TraitCapturer for Capturer {
                         0 => kRotate0,
                         90 => kRotate90,
                         180 => kRotate180,
-                        270 => kRotate180,
+                        270 => kRotate270,
                         _ => kRotate0
                     };
                 }
