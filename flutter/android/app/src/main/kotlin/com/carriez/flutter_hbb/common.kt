@@ -61,11 +61,11 @@ val SCREEN_INFO = Info(0, 0, 1, 200)
 
 //派宝改动：判断是否售货机，需要将画面捕获的长宽对调
 val ifVendingMachine: Boolean
-    get() = android.os.Build.MODEL != "rk3399-all"
+    get() = android.os.Build.MODEL == "rk3399-all"
 val captureWidth: Int
-    get() = if (ifVendingMachine) SCREEN_INFO.width else SCREEN_INFO.width
+    get() = if (ifVendingMachine) SCREEN_INFO.height else SCREEN_INFO.width
 val captureHeight: Int
-    get() = if (ifVendingMachine) SCREEN_INFO.height else SCREEN_INFO.height
+    get() = if (ifVendingMachine) SCREEN_INFO.width else SCREEN_INFO.height
 //改动结束
 
 data class Info(
