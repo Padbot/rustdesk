@@ -57,7 +57,7 @@ impl crate::TraitCapturer for Capturer {
             if self.rotation == kRotate0 {
                 if let Some(temp) = get_rotation() {
                     self.rotation = match temp {
-                        0 => kRotate0,
+                        0 => kRotate270,
                         90 => kRotate90,
                         180 => kRotate180,
                         270 => kRotate270,
