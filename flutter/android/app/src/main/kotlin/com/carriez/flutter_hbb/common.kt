@@ -63,9 +63,9 @@ val SCREEN_INFO = Info(0, 0, 1, 200)
 val ifVendingMachine: Boolean
     get() = android.os.Build.MODEL != "rk3399-all"
 val captureWidth: Int
-    get() = if (ifVendingMachine) SCREEN_INFO.height else SCREEN_INFO.width
-val captureHeight: Int
     get() = if (ifVendingMachine) SCREEN_INFO.width else SCREEN_INFO.height
+val captureHeight: Int
+    get() = if (ifVendingMachine) SCREEN_INFO.height else SCREEN_INFO.width
 //改动结束
 
 data class Info(
