@@ -82,12 +82,18 @@ class MainService : Service() {
         } else {
             when (kind) {
                 "touch" -> {
-                    InputService.ctx?.onTouchInput(mask, x, y)
-                    InputServiceCompat.ctx?.onTouchInput(mask, x, y)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        InputService.ctx?.onTouchInput(mask, x, y)
+                    }else {
+                        InputServiceCompat.ctx?.onTouchInput(mask, x, y)
+                    }
                 }
                 "mouse" -> {
-                    InputService.ctx?.onMouseInput(mask, x, y)
-                    InputServiceCompat.ctx?.onMouseInput(mask, x, y)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        InputService.ctx?.onMouseInput(mask, x, y)
+                    }else {
+                        InputServiceCompat.ctx?.onMouseInput(mask, x, y)
+                    }
                 }
                 else -> {
                 }
