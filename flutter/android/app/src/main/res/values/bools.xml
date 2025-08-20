@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Base (<24): 两个服务都禁用 -->
+    <bool name="enable_input_service">false</bool>
+    <bool name="enable_input_service_compat">false</bool>
+</resources>

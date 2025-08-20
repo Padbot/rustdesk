@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- v26+: 仅启用新服务 -->
+    <bool name="enable_input_service">true</bool>
+    <bool name="enable_input_service_compat">false</bool>
+</resources>

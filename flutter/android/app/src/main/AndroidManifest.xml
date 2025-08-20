@@ -43,7 +43,7 @@
 
         <service
             android:name=".InputService"
-            android:enabled="true"
+            android:enabled="@bool/enable_input_service"
             android:exported="false"
             android:label="Robot Input"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
@@ -58,7 +58,7 @@
 
         <service
             android:name=".InputServiceCompat"
-            android:enabled="true"
+            android:enabled="@bool/enable_input_service_compat"
             android:exported="false"
             android:label="Vending Machine Input"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">

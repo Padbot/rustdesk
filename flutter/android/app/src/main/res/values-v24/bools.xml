@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- v24-v25: 仅启用 Compat 服务 -->
+    <bool name="enable_input_service">false</bool>
+    <bool name="enable_input_service_compat">true</bool>
+</resources>
