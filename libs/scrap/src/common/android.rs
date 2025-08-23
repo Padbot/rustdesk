@@ -1,6 +1,5 @@
 use crate::android::ffi::*;
 use crate::{Frame, Pixfmt};
-use crate::ARGBRotate; //派宝改动：使用linyuv库旋转画面数据
 use lazy_static::lazy_static;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -46,10 +45,101 @@ impl Capturer {
 impl crate::TraitCapturer for Capturer {
     fn frame<'a>(&'a mut self, _timeout: Duration) -> io::Result<Frame<'a>> {
         if get_video_raw(&mut self.rgba, &mut self.saved_raw_data).is_some() {
+            // 根据 rotation 旋转 RGBA 数据，并在 90/270 度时交换宽高
+            let mut out_w = self.width();
+            let mut out_h = self.height();
+            let rotation = get_rotation().unwrap_or(0) % 360;
+            self.rotation = rotation as u16;
+
+            match rotation {
+                0 | 360 => {
+                    // 不旋转
+                }
+                90 => {
+                    // 旋转90度，宽高互换
+                    let src_stride = out_w * 4;
+                    let dst_stride = out_h * 4;
+                    let dst_len = out_w * out_h * 4;
+                    self.tmp_bgra.resize(dst_len, 0);
+                    unsafe {
+                        crate::common::ARGBRotate(
+                            self.rgba.as_ptr(),
+                            src_stride as _
+                            ,
+                            self.tmp_bgra.as_mut_ptr(),
+                            dst_stride as _
+                            ,
+                            out_w as _
+                            ,
+                            out_h as _
+                            ,
+                            crate::RotationMode::kRotate90,
+                        );
+                    }
+                    std::mem::swap(&mut self.rgba, &mut self.tmp_bgra);
+                    self.tmp_bgra.clear();
+                    // 交换宽高
+                    std::mem::swap(&mut out_w, &mut out_h);
+                }
+                180 => {
+                    // 旋转180度，宽高不变
+                    let src_stride = out_w * 4;
+                    let dst_stride = out_w * 4;
+                    let dst_len = out_w * out_h * 4;
+                    self.tmp_bgra.resize(dst_len, 0);
+                    unsafe {
+                        crate::common::ARGBRotate(
+                            self.rgba.as_ptr(),
+                            src_stride as _
+                            ,
+                            self.tmp_bgra.as_mut_ptr(),
+                            dst_stride as _
+                            ,
+                            out_w as _
+                            ,
+                            out_h as _
+                            ,
+                            crate::RotationMode::kRotate180,
+                        );
+                    }
+                    std::mem::swap(&mut self.rgba, &mut self.tmp_bgra);
+                    self.tmp_bgra.clear();
+                }
+                270 => {
+                    // 旋转270度，宽高互换
+                    let src_stride = out_w * 4;
+                    let dst_stride = out_h * 4;
+                    let dst_len = out_w * out_h * 4;
+                    self.tmp_bgra.resize(dst_len, 0);
+                    unsafe {
+                        crate::common::ARGBRotate(
+                            self.rgba.as_ptr(),
+                            src_stride as _
+                            ,
+                            self.tmp_bgra.as_mut_ptr(),
+                            dst_stride as _
+                            ,
+                            out_w as _
+                            ,
+                            out_h as _
+                            ,
+                            crate::RotationMode::kRotate270,
+                        );
+                    }
+                    std::mem::swap(&mut self.rgba, &mut self.tmp_bgra);
+                    self.tmp_bgra.clear();
+                    // 交换宽高
+                    std::mem::swap(&mut out_w, &mut out_h);
+                }
+                _ => {
+                    // 未知角度，保持不变
+                }
+            }
+
             Ok(Frame::PixelBuffer(PixelBuffer::new(
                 &self.rgba,
-                self.width(),
-                self.height(),
+                out_w,
+                out_h,
             )))
         } else {
             return Err(io::ErrorKind::WouldBlock.into());
