@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- v24-v25: 仅启用 Compat 服务 -->
-    <bool name="enable_input_service">false</bool>
-    <bool name="enable_input_service_compat">true</bool>
+    <!-- v24-v25: 启用统一的 InputService，关闭 Compat -->
+    <bool name="enable_input_service">true</bool>
+<!--    <bool name="enable_input_service_compat">false</bool>-->
 </resources>

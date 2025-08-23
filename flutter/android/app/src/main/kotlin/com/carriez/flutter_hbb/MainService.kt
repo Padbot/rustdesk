@@ -63,7 +63,6 @@ const val VIDEO_KEY_FRAME_RATE = 30
 class MainService : Service() {
 
     @Keep
-    @RequiresApi(Build.VERSION_CODES.N)
     fun rustPointerInput(kind: Int, mask: Int, x: Int, y: Int) {
         // turn on screen with LEFT_DOWN when screen off
         if (!powerManager.isInteractive && (kind == 0 || mask == LEFT_DOWN)) {
@@ -77,11 +76,9 @@ class MainService : Service() {
             when (kind) {
                 0 -> { // touch
                     InputService.ctx?.onTouchInput(mask, x, y)
-                    InputServiceCompat.ctx?.onTouchInput(mask, x, y)
                 }
                 1 -> { // mouse
                     InputService.ctx?.onMouseInput(mask, x, y)
-                    InputServiceCompat.ctx?.onMouseInput(mask, x, y)
                 }
                 else -> {
                 }
@@ -92,11 +89,7 @@ class MainService : Service() {
     @Keep
     @RequiresApi(Build.VERSION_CODES.N)
     fun rustKeyEventInput(input: ByteArray) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            InputService.ctx?.onKeyEvent(input)
-        }else{
-            InputServiceCompat.ctx?.onKeyEvent(input)
-        }
+        InputService.ctx?.onKeyEvent(input)
     }
 
     @Keep
@@ -522,7 +515,7 @@ class MainService : Service() {
                 mapOf(
                     "name" to "input",
                     "value" to (
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) InputService.isOpen else InputServiceCompat.isOpen
+                            InputService.isOpen
                     ).toString()
                 )
             )
