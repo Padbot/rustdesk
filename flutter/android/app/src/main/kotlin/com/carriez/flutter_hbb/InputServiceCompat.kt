@@ -18,22 +18,6 @@ import java.util.Timer
 import java.util.TimerTask
 import kotlin.math.abs
 import kotlin.math.max
-
-const val LIFT_DOWN = 9
-const val LIFT_MOVE = 8
-const val LIFT_UP = 10
-const val RIGHT_DOWN = 17
-const val RIGHT_UP = 18
-const val WHEEL_BUTTON_DOWN = 33
-const val WHEEL_BUTTON_UP = 34
-const val WHEEL_DOWN = 523331
-const val WHEEL_UP = 963
-
-const val WHEEL_STEP = 120
-const val WHEEL_DURATION = 50L
-const val LONG_TAP_DELAY = 200L
-const val TAP_DELAY = 120L
-
 @RequiresApi(Build.VERSION_CODES.O)
 class InputServiceCompat : AccessibilityService() {
 
