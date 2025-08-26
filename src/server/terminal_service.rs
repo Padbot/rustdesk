@@ -85,16 +85,35 @@ fn get_default_shell() -> String {
             }
         }
 
-        // Check for common shells in order of preference
-        let shells = ["/bin/bash", "/bin/zsh", "/bin/sh"];
-        for shell in &shells {
-            if std::path::Path::new(shell).exists() {
-                return shell.to_string();
+        // Android-specific shells
+        #[cfg(target_os = "android")]
+        {
+            let shells = [
+                "/system/bin/sh",
+                "/system/bin/mksh",
+                "/bin/sh",
+            ];
+            for shell in &shells {
+                if std::path::Path::new(shell).exists() {
+                    return shell.to_string();
+                }
             }
+            return "/system/bin/sh".to_string();
         }
 
-        // Final fallback to /bin/sh which should exist on all POSIX systems
-        "/bin/sh".to_string()
+        // Unix-like defaults (Linux, macOS, etc.)
+        #[cfg(not(target_os = "android"))]
+        {
+            // Check for common shells in order of preference
+            let shells = ["/bin/bash", "/bin/zsh", "/bin/sh"];
+            for shell in &shells {
+                if std::path::Path::new(shell).exists() {
+                    return shell.to_string();
+                }
+            }
+            // Final fallback to /bin/sh which should exist on all POSIX systems
+            "/bin/sh".to_string()
+        }
     }
 }
 

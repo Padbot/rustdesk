@@ -25,7 +25,7 @@ use hbb_common::{
     timeout, tokio, ResultType, Stream,
 };
 use scrap::camera;
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(not(target_os = "ios"))]
 use service::ServiceTmpl;
 use service::{EmptyExtraFieldService, GenericService, Service, Subscriber};
 use video_service::VideoSource;
@@ -33,7 +33,7 @@ use video_service::VideoSource;
 use crate::ipc::Data;
 
 pub mod audio_service;
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(not(target_os = "ios"))]
 pub mod terminal_service;
 cfg_if::cfg_if! {
 if #[cfg(not(target_os = "ios"))] {
