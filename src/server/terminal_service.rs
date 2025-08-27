@@ -24,6 +24,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt;
+
 const MAX_OUTPUT_BUFFER_SIZE: usize = 1024 * 1024; // 1MB per terminal
 const MAX_BUFFER_LINES: usize = 10000;
 const MAX_SERVICES: usize = 100; // Maximum number of persistent terminal services
@@ -46,7 +49,8 @@ lazy_static::lazy_static! {
 // Abstraction over platform-specific child process handling
 trait TerminalChildOps {
     fn process_id(&self) -> Option<u32>;
-    fn try_wait(&mut self) -> std::io::Result<Option<()>>;
+    // Returns Some(exit_code) if the child has exited, otherwise None
+    fn try_wait(&mut self) -> std::io::Result<Option<i32>>;
     fn kill(&mut self) -> std::io::Result<()>;
 }
 
@@ -58,9 +62,24 @@ impl TerminalChildOps for PortableChildWrapper {
     fn process_id(&self) -> Option<u32> {
         self.0.process_id().map(|p| p as u32)
     }
-    fn try_wait(&mut self) -> std::io::Result<Option<()>> {
+    fn try_wait(&mut self) -> std::io::Result<Option<i32>> {
         match self.0.try_wait()? {
-            Some(_status) => Ok(Some(())),
+            Some(status) => {
+                #[cfg(unix)]
+                {
+                    if let Some(code) = status.code() {
+                        return Ok(Some(code));
+                    }
+                    if let Some(sig) = status.signal() {
+                        return Ok(Some(-(sig as i32)));
+                    }
+                    return Ok(Some(-1));
+                }
+                #[cfg(not(unix))]
+                {
+                    return Ok(status.code().or(Some(-1)));
+                }
+            }
             None => Ok(None),
         }
     }
@@ -86,13 +105,20 @@ unsafe impl Sync for AndroidChild {}
 #[cfg(target_os = "android")]
 impl TerminalChildOps for AndroidChild {
     fn process_id(&self) -> Option<u32> { Some(self.pid as u32) }
-    fn try_wait(&mut self) -> std::io::Result<Option<()>> {
+    fn try_wait(&mut self) -> std::io::Result<Option<i32>> {
         let mut status: libc::c_int = 0;
         let ret = unsafe { libc::waitpid(self.pid, &mut status as *mut _, libc::WNOHANG) };
         if ret == 0 {
             Ok(None)
         } else if ret == self.pid {
-            Ok(Some(()))
+            let code = if unsafe { libc::WIFEXITED(status) } {
+                unsafe { libc::WEXITSTATUS(status) as i32 }
+            } else if unsafe { libc::WIFSIGNALED(status) } {
+                -(unsafe { libc::WTERMSIG(status) as i32 })
+            } else {
+                -1
+            };
+            Ok(Some(code))
         } else {
             Err(std::io::Error::last_os_error())
         }
@@ -897,7 +923,7 @@ impl TerminalServiceProxy {
             unsafe {
                 let c_str = std::ffi::CStr::from_ptr(ptsname_ptr);
                 let bytes = c_str.to_bytes();
-                if bytes.len() >= slave_name_buf.len() { return Err(Error::new(std::io::ErrorKind::Other, "ptsname too long")); }
+                if bytes.len() >= slave_name_buf.len() { return Err(anyhow!("ptsname too long")); }
                 slave_name_buf[..bytes.len()].copy_from_slice(bytes);
                 slave_name_buf[bytes.len()] = 0;
             }
@@ -1255,8 +1281,8 @@ impl TerminalServiceProxy {
                         // Take the child and add to zombie reaper
                         if let Some(mut child) = session.child.take() {
                             // Try to get exit code if available
-                            if let Ok(Some(status)) = child.try_wait() {
-                                exit_code = status.exit_code() as i32;
+                            if let Ok(Some(code)) = child.try_wait() {
+                                exit_code = code;
                             }
                             add_to_reaper(child);
                         }
@@ -1267,8 +1293,8 @@ impl TerminalServiceProxy {
                         let mut session = session_arc.lock().unwrap();
                         if let Some(mut child) = session.child.take() {
                             // Try to get exit code if available
-                            if let Ok(Some(status)) = child.try_wait() {
-                                exit_code = status.exit_code() as i32;
+                            if let Ok(Some(code)) = child.try_wait() {
+                                exit_code = code;
                             }
                             add_to_reaper(child);
                         }
