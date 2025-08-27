@@ -138,8 +138,8 @@ impl crate::TraitCapturer for Capturer {
 
             Ok(Frame::PixelBuffer(PixelBuffer::new(
                 &self.rgba,
-                out_w,
-                out_h,
+                self.width(),
+                self.height(),
             )))
         } else {
             return Err(io::ErrorKind::WouldBlock.into());
