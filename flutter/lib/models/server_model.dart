@@ -797,12 +797,14 @@ class ServerModel with ChangeNotifier {
     final on = ((keepScreenOn == KeepScreenOn.serviceOn) && _isStart) ||
         (keepScreenOn == KeepScreenOn.duringControlled &&
             _clients.map((e) => !e.disconnected).isNotEmpty);
-    if (on != await WakelockPlus.enabled) {
+    try {
       if (on) {
-        WakelockPlus.enable();
+        await WakelockPlus.enable();
       } else {
-        WakelockPlus.disable();
+        await WakelockPlus.disable();
       }
+    } catch (e) {
+      debugPrint("androidUpdatekeepScreenOn failed: $e");
     }
   }
 }
