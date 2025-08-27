@@ -104,6 +104,9 @@ impl TerminalChildOps for AndroidChild {
 }
 
 #[cfg(target_os = "android")]
+type ChildType = AndroidChild;
+
+#[cfg(target_os = "android")]
 #[derive(Debug)]
 struct AndroidWinsize { rows: u16, cols: u16 }
 
