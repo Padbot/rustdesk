@@ -136,10 +136,11 @@ impl crate::TraitCapturer for Capturer {
                 }
             }
 
+            // 使用旋转后的最终宽高创建 PixelBuffer，避免 stride 计算错误导致画面拉伸/裁剪
             Ok(Frame::PixelBuffer(PixelBuffer::new(
                 &self.rgba,
-                self.width(),
-                self.height(),
+                out_w,
+                out_h,
             )))
         } else {
             return Err(io::ErrorKind::WouldBlock.into());

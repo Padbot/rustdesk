@@ -107,7 +107,7 @@ class MainService : Service() {
             }
             //派宝改动：判断是否售货机，指定旋转角度270，否则为0不需要旋转
             "rotation" -> {
-                val rotation = if (ifVendingMachine) 270 else 0
+                val rotation = if (ifVendingMachine) 0 else 0
                 JSONObject().apply {
                     put("rotation", rotation)
                 }.toString()
@@ -226,6 +226,8 @@ class MainService : Service() {
     private var videoEncoder: MediaCodec? = null
     private var imageReader: ImageReader? = null
     private var virtualDisplay: VirtualDisplay? = null
+    // 为处理 rowStride != width*4 的情况，复用一块紧凑的 Direct ByteBuffer
+    private var compactVideoBuffer: ByteBuffer? = null
 
     // audio
     private val audioRecordHandle = AudioRecordHandle(this, { isStart }, { isAudioStart })
@@ -391,9 +393,66 @@ class MainService : Service() {
                             imageReader.acquireLatestImage().use { image ->
                                 if (image == null || !isStart) return@setOnImageAvailableListener
                                 val planes = image.planes
-                                val buffer = planes[0].buffer
-                                buffer.rewind()
-                                FFI.onVideoFrameUpdate(buffer)
+                                val plane0 = planes[0]
+                                val buffer = plane0.buffer
+                                val rowStride = plane0.rowStride
+                                val pixelStride = plane0.pixelStride
+                                val w = captureWidth
+                                val h = captureHeight
+
+                                // 确保复用缓冲大小正确
+                                val tightSize = w * h * 4
+                                if (compactVideoBuffer == null || compactVideoBuffer!!.capacity() != tightSize) {
+                                    compactVideoBuffer = ByteBuffer.allocateDirect(tightSize)
+                                }
+
+                                if (pixelStride == 4 && rowStride == w * 4) {
+                                    // 可直接传递（紧凑排列），但为了安全，复制到复用区并 rewind
+                                    val dst = compactVideoBuffer!!
+                                    dst.clear()
+                                    buffer.limit(tightSize)
+                                    buffer.rewind()
+                                    dst.put(buffer)
+                                    dst.rewind()
+                                    FFI.onVideoFrameUpdate(dst)
+                                } else if (pixelStride == 4 && rowStride >= w * 4) {
+                                    // 行有 padding，逐行拷贝到紧凑缓冲
+                                    val dst = compactVideoBuffer!!
+                                    dst.clear()
+                                    val rowTmp = ByteArray(w * 4)
+                                    var y = 0
+                                    while (y < h) {
+                                        val start = y * rowStride
+                                        buffer.position(start)
+                                        buffer.limit(start + w * 4)
+                                        buffer.get(rowTmp, 0, w * 4)
+                                        dst.put(rowTmp)
+                                        y++
+                                    }
+                                    dst.rewind()
+                                    FFI.onVideoFrameUpdate(dst)
+                                } else {
+                                    // 非 4 字节像素步幅的罕见情况，逐像素拷贝到紧凑缓冲
+                                    val dst = compactVideoBuffer!!
+                                    dst.clear()
+                                    val srcArray = ByteArray(rowStride)
+                                    var y = 0
+                                    while (y < h) {
+                                        val start = y * rowStride
+                                        buffer.position(start)
+                                        buffer.limit(start + rowStride)
+                                        buffer.get(srcArray, 0, rowStride)
+                                        var x = 0
+                                        while (x < w) {
+                                            val s = x * pixelStride
+                                            dst.put(srcArray, s, 4)
+                                            x++
+                                        }
+                                        y++
+                                    }
+                                    dst.rewind()
+                                    FFI.onVideoFrameUpdate(dst)
+                                }
                             }
                         } catch (ignored: java.lang.Exception) {
                         }
