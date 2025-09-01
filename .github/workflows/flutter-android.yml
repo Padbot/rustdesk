@@ -41,7 +41,7 @@ jobs:
     uses: ./.github/workflows/bridge.yml
 
   build-rustdesk-android:
-    needs: [generate-bridge-linux]
+    needs: [ generate-bridge-linux ]
     name: build rustdesk android apk ${{ matrix.job.target }} (${{ matrix.job.os }})
     runs-on: ${{ matrix.job.os }}
     strategy:
@@ -49,11 +49,11 @@ jobs:
       matrix:
         job:
           - {
-            arch: aarch64,
-            target: aarch64-linux-android,
+            arch: armv7,
+            target: armv7-linux-androideabi,
             os: ubuntu-24.04,
             extra-build-features: "",
-            openssl-arch: android-arm64
+            openssl-arch: android-arm
           }
     steps:
       - name: Free Disk Space (Ubuntu)
@@ -297,7 +297,7 @@ jobs:
             signed-apk/rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.apk
 
   build-rustdesk-android-universal:
-    needs: [build-rustdesk-android]
+    needs: [ build-rustdesk-android ]
     name: build rustdesk android universal apk
     if: ${{ inputs.upload-artifact }}
     runs-on: ubuntu-24.04
@@ -381,18 +381,17 @@ jobs:
           name: bridge-artifact
           path: ./
 
-      - name: Download Rustdesk library from Artifacts (arm64-v8a)
+#      - name: Download Rustdesk library from Artifacts (arm64-v8a)
+#        uses: actions/download-artifact@master
+#        with:
+#          name: librustdesk.so.aarch64-linux-android
+#          path: ./flutter/android/app/src/main/jniLibs/arm64-v8a
+
+      - name: Download Rustdesk library from Artifacts (armeabi-v7a)
         uses: actions/download-artifact@master
         with:
-          name: librustdesk.so.aarch64-linux-android
-          path: ./flutter/android/app/src/main/jniLibs/arm64-v8a
-
-      # 注释非 arm64 的产物下载，仅保留 arm64-v8a
-      # - name: Download Rustdesk library from Artifacts (armeabi-v7a)
-      #   uses: actions/download-artifact@master
-      #   with:
-      #     name: librustdesk.so.armv7-linux-androideabi
-      #     path: ./flutter/android/app/src/main/jniLibs/armeabi-v7a
+          name: librustdesk.so.armv7-linux-androideabi
+          path: ./flutter/android/app/src/main/jniLibs/armeabi-v7a
 
       # - name: Download Rustdesk library from Artifacts (x86_64)
       #   uses: actions/download-artifact@master
@@ -422,11 +421,10 @@ jobs:
           export PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH
           # temporary use debug sign config
           sed -i "s/signingConfigs.release/signingConfigs.debug/g" ./flutter/android/app/build.gradle
-          mv ./flutter/android/app/src/main/jniLibs/arm64-v8a/liblibrustdesk.so ./flutter/android/app/src/main/jniLibs/arm64-v8a/librustdesk.so
-          cp ${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so ./flutter/android/app/src/main/jniLibs/arm64-v8a/
-          # 注释其他架构产物与依赖
-          # mv ./flutter/android/app/src/main/jniLibs/armeabi-v7a/liblibrustdesk.so ./flutter/android/app/src/main/jniLibs/armeabi-v7a/librustdesk.so
-          # cp ${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/arm-linux-androideabi/libc++_shared.so ./flutter/android/app/src/main/jniLibs/armeabi-v7a/
+          # mv ./flutter/android/app/src/main/jniLibs/arm64-v8a/liblibrustdesk.so ./flutter/android/app/src/main/jniLibs/arm64-v8a/librustdesk.so
+          # cp ${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so ./flutter/android/app/src/main/jniLibs/arm64-v8a/
+          mv ./flutter/android/app/src/main/jniLibs/armeabi-v7a/liblibrustdesk.so ./flutter/android/app/src/main/jniLibs/armeabi-v7a/librustdesk.so
+          cp ${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/arm-linux-androideabi/libc++_shared.so ./flutter/android/app/src/main/jniLibs/armeabi-v7a/
           # mv ./flutter/android/app/src/main/jniLibs/x86_64/liblibrustdesk.so ./flutter/android/app/src/main/jniLibs/x86_64/librustdesk.so
           # cp ${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/x86_64-linux-android/libc++_shared.so ./flutter/android/app/src/main/jniLibs/x86_64/
           # if [ "${{ env.reltype }}" = "debug" ]; then
@@ -434,7 +432,7 @@ jobs:
           #   cp ${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/i686-linux-android/libc++_shared.so ./flutter/android/app/src/main/jniLibs/x86/
           # fi
           pushd flutter
-          flutter build apk "--${{ env.reltype }}" --target-platform android-arm64
+          flutter build apk "--${{ env.reltype }}" --target-platform android-arm
           popd
           mkdir -p signed-apk
           mv ./flutter/build/app/outputs/flutter-apk/app-${{ env.reltype }}.apk signed-apk/rustdesk-${{ env.VERSION }}-universal${{ env.suffix }}.apk
