@@ -43,7 +43,7 @@ class ServerModel with ChangeNotifier {
   late String _emptyIdShow;
   late final IDTextEditingController _serverId;
   final _serverPasswd =
-      TextEditingController(text: translate("Generating ..."));
+  TextEditingController(text: translate("Generating ..."));
 
   final tabController = DesktopTabController(tabType: DesktopTabType.cm);
 
@@ -148,7 +148,7 @@ class ServerModel with ChangeNotifier {
 
     timerCallback() async {
       final connectionStatus =
-          jsonDecode(await bind.mainGetConnectStatus()) as Map<String, dynamic>;
+      jsonDecode(await bind.mainGetConnectStatus()) as Map<String, dynamic>;
       final statusNum = connectionStatus['status_num'] as int;
       if (statusNum != _connectStatus) {
         _connectStatus = statusNum;
@@ -215,7 +215,7 @@ class ServerModel with ChangeNotifier {
       bind.mainSetOption(key: kOptionEnableFileTransfer, value: "N");
     } else {
       final fileOption =
-          await bind.mainGetOption(key: kOptionEnableFileTransfer);
+      await bind.mainGetOption(key: kOptionEnableFileTransfer);
       _fileOk = fileOption != 'N';
     }
 
@@ -230,12 +230,12 @@ class ServerModel with ChangeNotifier {
     var update = false;
     final temporaryPassword = await bind.mainGetTemporaryPassword();
     final verificationMethod =
-        await bind.mainGetOption(key: kOptionVerificationMethod);
+    await bind.mainGetOption(key: kOptionVerificationMethod);
     final temporaryPasswordLength =
-        await bind.mainGetOption(key: "temporary-password-length");
+    await bind.mainGetOption(key: "temporary-password-length");
     final approveMode = await bind.mainGetOption(key: kOptionApproveMode);
     final numericOneTimePassword =
-        await mainGetBoolOption(kOptionAllowNumericOneTimePassword);
+    await mainGetBoolOption(kOptionAllowNumericOneTimePassword);
     /*
     var hideCm = option2bool(
         'allow-hide-cm', await bind.mainGetOption(key: 'allow-hide-cm'));
@@ -321,7 +321,7 @@ class ServerModel with ChangeNotifier {
     if (!_fileOk &&
         !await AndroidPermissionManager.check(kManageExternalStorage)) {
       final res =
-          await AndroidPermissionManager.request(kManageExternalStorage);
+      await AndroidPermissionManager.request(kManageExternalStorage);
       if (!res) {
         showToast(translate('Failed'));
         return;
@@ -613,17 +613,17 @@ class ServerModel with ChangeNotifier {
   void showLoginDialog(Client client) {
     showClientDialog(
       client,
-      client.isFileTransfer 
-          ? "Transfer file" 
+      client.isFileTransfer
+          ? "Transfer file"
           : client.isViewCamera
-              ? "View camera"
-              : client.isTerminal 
-                  ? "Terminal" 
-                  : "Share screen",
+          ? "View camera"
+          : client.isTerminal
+          ? "Terminal"
+          : "Share screen",
       'Do you accept?',
       'android_new_connection_tip',
-      () => sendLoginResponse(client, false),
-      () => sendLoginResponse(client, true),
+          () => sendLoginResponse(client, false),
+          () => sendLoginResponse(client, true),
     );
   }
 
@@ -638,8 +638,8 @@ class ServerModel with ChangeNotifier {
       'Voice call',
       'Do you accept?',
       'android_new_voice_call_tip',
-      () => handleVoiceCall(client, false),
-      () => handleVoiceCall(client, true),
+          () => handleVoiceCall(client, false),
+          () => handleVoiceCall(client, true),
     );
   }
 
@@ -658,7 +658,7 @@ class ServerModel with ChangeNotifier {
 
       return CustomAlertDialog(
         title:
-            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
           Text(translate(title)),
           IconButton(onPressed: close, icon: const Icon(Icons.close))
         ]),
@@ -793,16 +793,18 @@ class ServerModel with ChangeNotifier {
     final keepScreenOn = floatingWindowDisabled
         ? KeepScreenOn.never
         : optionToKeepScreenOn(
-            bind.mainGetLocalOption(key: kOptionKeepScreenOn));
+        bind.mainGetLocalOption(key: kOptionKeepScreenOn));
     final on = ((keepScreenOn == KeepScreenOn.serviceOn) && _isStart) ||
         (keepScreenOn == KeepScreenOn.duringControlled &&
             _clients.map((e) => !e.disconnected).isNotEmpty);
-    if (on != await WakelockPlus.enabled) {
+    try {
       if (on) {
-        WakelockPlus.enable();
+        await WakelockPlus.enable();
       } else {
-        WakelockPlus.disable();
+        await WakelockPlus.disable();
       }
+    } catch (e) {
+      debugPrint("androidUpdatekeepScreenOn failed: $e");
     }
   }
 }

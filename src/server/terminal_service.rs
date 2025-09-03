@@ -3,7 +3,14 @@ use hbb_common::{
     anyhow::{anyhow, Context, Result},
     compress,
 };
-use portable_pty::{Child, CommandBuilder, PtySize};
+#[cfg(not(target_os = "android"))]
+use portable_pty::{Child as PtyChild, CommandBuilder, PtySize};
+#[cfg(target_os = "android")]
+use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
+#[cfg(target_os = "android")]
+use std::{ffi::CString, fs::File, os::unix::prelude::IntoRawFd};
+#[cfg(target_os = "android")]
+use libc;
 use std::{
     collections::{HashMap, VecDeque},
     io::{Read, Write},
@@ -16,6 +23,9 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt;
 
 const MAX_OUTPUT_BUFFER_SIZE: usize = 1024 * 1024; // 1MB per terminal
 const MAX_BUFFER_LINES: usize = 10000;
@@ -33,8 +43,98 @@ lazy_static::lazy_static! {
     static ref CLEANUP_TASK: Arc<Mutex<Option<std::thread::JoinHandle<()>>>> = Arc::new(Mutex::new(None));
 
     // List of terminal child processes to check for zombies
-    static ref TERMINAL_TASKS: Arc<Mutex<Vec<Box<dyn Child + Send + Sync>>>> = Arc::new(Mutex::new(Vec::new()));
+    static ref TERMINAL_TASKS: Arc<Mutex<Vec<ChildType>>> = Arc::new(Mutex::new(Vec::new()));
 }
+
+// Abstraction over platform-specific child process handling
+trait TerminalChildOps {
+    fn process_id(&self) -> Option<u32>;
+    // Returns Some(exit_code) if the child has exited, otherwise None
+    fn try_wait(&mut self) -> std::io::Result<Option<i32>>;
+    fn kill(&mut self) -> std::io::Result<()>;
+}
+
+#[cfg(not(target_os = "android"))]
+struct PortableChildWrapper(Box<dyn PtyChild + Send + Sync>);
+
+#[cfg(not(target_os = "android"))]
+impl TerminalChildOps for PortableChildWrapper {
+    fn process_id(&self) -> Option<u32> {
+        self.0.process_id().map(|p| p as u32)
+    }
+    fn try_wait(&mut self) -> std::io::Result<Option<i32>> {
+        match self.0.try_wait()? {
+            Some(status) => {
+                #[cfg(unix)]
+                {
+                    if let Some(code) = status.code() {
+                        return Ok(Some(code));
+                    }
+                    if let Some(sig) = status.signal() {
+                        return Ok(Some(-(sig as i32)));
+                    }
+                    return Ok(Some(-1));
+                }
+                #[cfg(not(unix))]
+                {
+                    return Ok(status.code().or(Some(-1)));
+                }
+            }
+            None => Ok(None),
+        }
+    }
+    fn kill(&mut self) -> std::io::Result<()> {
+        self.0.kill()
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+type ChildType = PortableChildWrapper;
+
+#[cfg(target_os = "android")]
+#[derive(Clone, Copy)]
+struct AndroidChild {
+    pid: libc::pid_t,
+}
+
+#[cfg(target_os = "android")]
+unsafe impl Send for AndroidChild {}
+#[cfg(target_os = "android")]
+unsafe impl Sync for AndroidChild {}
+
+#[cfg(target_os = "android")]
+impl TerminalChildOps for AndroidChild {
+    fn process_id(&self) -> Option<u32> { Some(self.pid as u32) }
+    fn try_wait(&mut self) -> std::io::Result<Option<i32>> {
+        let mut status: libc::c_int = 0;
+        let ret = unsafe { libc::waitpid(self.pid, &mut status as *mut _, libc::WNOHANG) };
+        if ret == 0 {
+            Ok(None)
+        } else if ret == self.pid {
+            let code = if unsafe { libc::WIFEXITED(status) } {
+                unsafe { libc::WEXITSTATUS(status) as i32 }
+            } else if unsafe { libc::WIFSIGNALED(status) } {
+                -(unsafe { libc::WTERMSIG(status) as i32 })
+            } else {
+                -1
+            };
+            Ok(Some(code))
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
+    }
+    fn kill(&mut self) -> std::io::Result<()> {
+        let ret = unsafe { libc::kill(self.pid, libc::SIGKILL) };
+        if ret == 0 { Ok(()) } else { Err(std::io::Error::last_os_error()) }
+    }
+}
+
+#[cfg(target_os = "android")]
+type ChildType = AndroidChild;
+
+#[cfg(target_os = "android")]
+#[derive(Debug)]
+struct AndroidWinsize { rows: u16, cols: u16 }
 
 /// Service metadata that is sent to clients
 #[derive(Clone, Debug)]
@@ -85,16 +185,35 @@ fn get_default_shell() -> String {
             }
         }
 
-        // Check for common shells in order of preference
-        let shells = ["/bin/bash", "/bin/zsh", "/bin/sh"];
-        for shell in &shells {
-            if std::path::Path::new(shell).exists() {
-                return shell.to_string();
+        // Android-specific shells
+        #[cfg(target_os = "android")]
+        {
+            let shells = [
+                "/system/bin/sh",
+                "/system/bin/mksh",
+                "/bin/sh",
+            ];
+            for shell in &shells {
+                if std::path::Path::new(shell).exists() {
+                    return shell.to_string();
+                }
             }
+            return "/system/bin/sh".to_string();
         }
 
-        // Final fallback to /bin/sh which should exist on all POSIX systems
-        "/bin/sh".to_string()
+        // Unix-like defaults (Linux, macOS, etc.)
+        #[cfg(not(target_os = "android"))]
+        {
+            // Check for common shells in order of preference
+            let shells = ["/bin/bash", "/bin/zsh", "/bin/sh"];
+            for shell in &shells {
+                if std::path::Path::new(shell).exists() {
+                    return shell.to_string();
+                }
+            }
+            // Final fallback to /bin/sh which should exist on all POSIX systems
+            "/bin/sh".to_string()
+        }
     }
 }
 
@@ -210,7 +329,7 @@ pub fn cleanup_inactive_services() {
 }
 
 /// Add a child process to the zombie reaper
-fn add_to_reaper(child: Box<dyn Child + Send + Sync>) {
+fn add_to_reaper(child: ChildType) {
     if let Ok(mut tasks) = TERMINAL_TASKS.lock() {
         tasks.push(child);
     }
@@ -440,8 +559,11 @@ impl OutputBuffer {
 pub struct TerminalSession {
     pub created_at: Instant,
     last_activity: Instant,
+    #[cfg(not(target_os = "android"))]
     pty_pair: Option<portable_pty::PtyPair>,
-    child: Option<Box<dyn Child + std::marker::Send + Sync>>,
+    #[cfg(target_os = "android")]
+    android_master: Option<File>,
+    child: Option<ChildType>,
     // Channel for sending input to the writer thread
     input_tx: Option<SyncSender<Vec<u8>>>,
     // Channel for receiving output from the reader thread
@@ -465,7 +587,10 @@ impl TerminalSession {
         Self {
             created_at: Instant::now(),
             last_activity: Instant::now(),
+            #[cfg(not(target_os = "android"))]
             pty_pair: None,
+            #[cfg(target_os = "android")]
+            android_master: None,
             child: None,
             input_tx: None,
             output_rx: None,
@@ -518,6 +643,11 @@ impl TerminalSession {
         #[cfg(any(target_os = "windows", target_os = "linux"))]
         {
             self.pty_pair = None;
+        }
+        #[cfg(target_os = "android")]
+        {
+            // Close the PTY master to signal threads to exit
+            self.android_master = None;
         }
 
         // Wait for threads to finish
@@ -756,44 +886,97 @@ impl TerminalServiceProxy {
         let mut session =
             TerminalSession::new(open.terminal_id, open.rows as u16, open.cols as u16);
 
-        let pty_size = PtySize {
-            rows: open.rows as u16,
-            cols: open.cols as u16,
-            pixel_width: 0,
-            pixel_height: 0,
+        #[cfg(not(target_os = "android"))]
+        let (writer, reader, child, pty_pair_for_session) = {
+            let pty_size = PtySize { rows: open.rows as u16, cols: open.cols as u16, pixel_width: 0, pixel_height: 0 };
+            log::debug!("Opening PTY with size: {}x{}", open.rows, open.cols);
+            let pty_system = portable_pty::native_pty_system();
+            let pty_pair = pty_system.openpty(pty_size).context("Failed to open PTY")?;
+
+            // Use default shell for the platform
+            let shell = get_default_shell();
+            log::debug!("Using shell: {}", shell);
+
+            #[allow(unused_mut)]
+            let mut cmd = CommandBuilder::new(&shell);
+            #[cfg(target_os = "windows")]
+            if let Some(token) = &self.user_token { cmd.set_user_token(*token as _); }
+
+            log::debug!("Spawning shell process...");
+            let child = pty_pair.slave.spawn_command(cmd).context("Failed to spawn command")?;
+            let writer = pty_pair.master.take_writer().context("Failed to get writer")?;
+            let reader = pty_pair.master.try_clone_reader().context("Failed to get reader")?;
+            (writer, reader, PortableChildWrapper(child), Some(pty_pair))
         };
 
-        log::debug!("Opening PTY with size: {}x{}", open.rows, open.cols);
-        let pty_system = portable_pty::native_pty_system();
-        let pty_pair = pty_system.openpty(pty_size).context("Failed to open PTY")?;
+        #[cfg(target_os = "android")]
+        let (writer, reader, child, pty_pair_for_session) = {
+            use std::io::Error;
+            // Open a new PTY master
+            let master_fd = unsafe { libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY) };
+            if master_fd < 0 { return Err(Error::last_os_error()).context("posix_openpt failed"); }
+            if unsafe { libc::grantpt(master_fd) } != 0 { return Err(Error::last_os_error()).context("grantpt failed"); }
+            if unsafe { libc::unlockpt(master_fd) } != 0 { return Err(Error::last_os_error()).context("unlockpt failed"); }
+            let mut slave_name_buf = [0u8; 128];
+            let ptsname_ptr = unsafe { libc::ptsname(master_fd) };
+            if ptsname_ptr.is_null() { return Err(Error::last_os_error()).context("ptsname failed"); }
+            unsafe {
+                let c_str = std::ffi::CStr::from_ptr(ptsname_ptr);
+                let bytes = c_str.to_bytes();
+                if bytes.len() >= slave_name_buf.len() { return Err(anyhow!("ptsname too long")); }
+                slave_name_buf[..bytes.len()].copy_from_slice(bytes);
+                slave_name_buf[bytes.len()] = 0;
+            }
+            let slave_cstr = unsafe { CString::from_vec_unchecked(slave_name_buf[..slave_name_buf.iter().position(|&b| b==0).unwrap_or(0)].to_vec()) };
+            let slave_fd = unsafe { libc::open(slave_cstr.as_ptr(), libc::O_RDWR | libc::O_NOCTTY, 0) };
+            if slave_fd < 0 { return Err(Error::last_os_error()).context("open slave pty failed"); }
 
-        // Use default shell for the platform
-        let shell = get_default_shell();
-        log::debug!("Using shell: {}", shell);
+            // Set window size before spawning
+            let ws = libc::winsize { ws_row: open.rows as u16, ws_col: open.cols as u16, ws_xpixel: 0, ws_ypixel: 0 };
+            let _ = unsafe { libc::ioctl(slave_fd, libc::TIOCSWINSZ, &ws) };
 
-        #[allow(unused_mut)]
-        let mut cmd = CommandBuilder::new(&shell);
+            // Fork and exec shell
+            let shell = get_default_shell();
+            let shell_c = CString::new(shell.as_str()).unwrap();
+            let pid = unsafe { libc::fork() };
+            if pid < 0 {
+                unsafe { libc::close(slave_fd); libc::close(master_fd); }
+                return Err(Error::last_os_error()).context("fork failed");
+            }
+            if pid == 0 {
+                // child
+                unsafe {
+                    // Create new session and set controlling terminal
+                    libc::setsid();
+                    let _ = libc::ioctl(slave_fd, libc::TIOCSCTTY, 0);
+                    // dup slave to stdin/stdout/stderr
+                    libc::dup2(slave_fd, 0);
+                    libc::dup2(slave_fd, 1);
+                    libc::dup2(slave_fd, 2);
+                    // Close fds
+                    libc::close(master_fd);
+                    // exec shell
+                    libc::execlp(shell_c.as_ptr(), shell_c.as_ptr(), std::ptr::null::<libc::c_char>());
+                    // If exec fails
+                    libc::_exit(127);
+                }
+            }
+            // parent
+            unsafe { libc::close(slave_fd); }
 
-        #[cfg(target_os = "windows")]
-        if let Some(token) = &self.user_token {
-            cmd.set_user_token(*token as _);
-        }
+            // Create reader and writer from duplicated master fd
+            let writer_fd = unsafe { libc::dup(master_fd) };
+            if writer_fd < 0 { unsafe { libc::close(master_fd) }; return Err(Error::last_os_error()).context("dup writer fd failed"); }
+            let reader_fd = unsafe { libc::dup(master_fd) };
+            if reader_fd < 0 { unsafe { libc::close(master_fd); libc::close(writer_fd); } return Err(Error::last_os_error()).context("dup reader fd failed"); }
 
-        log::debug!("Spawning shell process...");
-        let child = pty_pair
-            .slave
-            .spawn_command(cmd)
-            .context("Failed to spawn command")?;
-
-        let writer = pty_pair
-            .master
-            .take_writer()
-            .context("Failed to get writer")?;
-
-        let reader = pty_pair
-            .master
-            .try_clone_reader()
-            .context("Failed to get reader")?;
+            let writer = unsafe { File::from_raw_fd(writer_fd) };
+            let reader = unsafe { File::from_raw_fd(reader_fd) };
+            let master = unsafe { File::from_raw_fd(master_fd) };
+            let child = AndroidChild { pid };
+            // Store master file in session later
+            (writer, reader, child, Some(master))
+        };
 
         session.pid = child.process_id().unwrap_or(0) as u32;
 
@@ -879,7 +1062,10 @@ impl TerminalServiceProxy {
             log::debug!("Terminal {} reader thread exiting", terminal_id);
         });
 
-        session.pty_pair = Some(pty_pair);
+        #[cfg(not(target_os = "android"))]
+        { session.pty_pair = pty_pair_for_session; }
+        #[cfg(target_os = "android")]
+        { session.android_master = pty_pair_for_session; }
         session.child = Some(child);
         session.input_tx = Some(input_tx);
         session.output_rx = Some(output_rx);
@@ -926,13 +1112,14 @@ impl TerminalServiceProxy {
             session.rows = resize.rows as u16;
             session.cols = resize.cols as u16;
 
+            #[cfg(not(target_os = "android"))]
             if let Some(pty_pair) = &session.pty_pair {
-                pty_pair.master.resize(PtySize {
-                    rows: resize.rows as u16,
-                    cols: resize.cols as u16,
-                    pixel_width: 0,
-                    pixel_height: 0,
-                })?;
+                pty_pair.master.resize(PtySize { rows: resize.rows as u16, cols: resize.cols as u16, pixel_width: 0, pixel_height: 0 })?;
+            }
+            #[cfg(target_os = "android")]
+            if let Some(master) = &session.android_master {
+                let ws = libc::winsize { ws_row: resize.rows as u16, ws_col: resize.cols as u16, ws_xpixel: 0, ws_ypixel: 0 };
+                let _ = unsafe { libc::ioctl(master.as_raw_fd(), libc::TIOCSWINSZ, &ws) };
             }
         }
         Ok(None)
@@ -1094,8 +1281,8 @@ impl TerminalServiceProxy {
                         // Take the child and add to zombie reaper
                         if let Some(mut child) = session.child.take() {
                             // Try to get exit code if available
-                            if let Ok(Some(status)) = child.try_wait() {
-                                exit_code = status.exit_code() as i32;
+                            if let Ok(Some(code)) = child.try_wait() {
+                                exit_code = code;
                             }
                             add_to_reaper(child);
                         }
@@ -1106,8 +1293,8 @@ impl TerminalServiceProxy {
                         let mut session = session_arc.lock().unwrap();
                         if let Some(mut child) = session.child.take() {
                             // Try to get exit code if available
-                            if let Ok(Some(status)) = child.try_wait() {
-                                exit_code = status.exit_code() as i32;
+                            if let Ok(Some(code)) = child.try_wait() {
+                                exit_code = code;
                             }
                             add_to_reaper(child);
                         }
