@@ -63,7 +63,6 @@ rubato = { version = "0.12", optional = true }
 samplerate = { version = "0.2", optional = true }
 uuid = { version = "1.3", features = ["v4"] }
 clap = "4.2"
-rpassword = "7.2"
 num_cpus = "1.15"
 bytes = { version = "1.4", features = ["serde"] }
 default-net = "0.14"
@@ -97,6 +96,8 @@ sys-locale = "0.3"
 enigo = { path = "libs/enigo", features = [ "with_serde" ] }
 clipboard = { path = "libs/clipboard" }
 ctrlc = "3.2"
+# Only used on desktop/CLI, avoid pulling termios on Android/iOS
+rpassword = "7.2"
 # arboard = { version = "3.4", features = ["wayland-data-control"] }
 arboard = { git = "https://github.com/rustdesk-org/arboard", features = ["wayland-data-control"] }
 clipboard-master = { git = "https://github.com/rustdesk-org/clipboard-master" }
@@ -202,6 +203,7 @@ openssl = { version = "0.10", features = ["vendored"] }
 android_logger = "0.13"
 jni = "0.21"
 android-wakelock = { git = "https://github.com/rustdesk-org/android-wakelock" }
+libc = "0.2"
 
 [workspace]
 members = ["libs/scrap", "libs/hbb_common", "libs/enigo", "libs/clipboard", "libs/virtual_display", "libs/virtual_display/dylib", "libs/portable", "libs/remote_printer"]

@@ -1531,9 +1531,9 @@ impl Connection {
             .unwrap()
             .insert(self.lr.my_id.clone(), self.tx_input.clone());
 
-        // Terminal feature is supported on desktop only
+        // Terminal feature is supported on all except iOS
         #[allow(unused_mut)]
-        let mut terminal = cfg!(not(any(target_os = "android", target_os = "ios")));
+        let mut terminal = cfg!(not(target_os = "ios"));
         #[cfg(target_os = "windows")]
         {
             terminal = terminal && portable_pty::win::check_support().is_ok();
@@ -1542,7 +1542,7 @@ impl Connection {
         pi.sas_enabled = sas_enabled;
         pi.features = Some(Features {
             privacy_mode: privacy_mode::is_privacy_mode_supported(),
-            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            #[cfg(not(target_os = "ios"))]
             terminal,
             ..Default::default()
         })
@@ -1649,7 +1649,7 @@ impl Connection {
             }
         } else if self.terminal {
             self.keyboard = false;
-            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            #[cfg(not(target_os = "ios"))]
             self.init_terminal_service().await;
         } else if self.view_camera {
             if !wait_session_id_confirm {
@@ -3184,10 +3184,8 @@ impl Connection {
                     }
                 }
                 Some(message::Union::TerminalAction(action)) => {
-                    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                    #[cfg(not(target_os = "ios"))]
                     allow_err!(self.handle_terminal_action(action).await);
-                    #[cfg(any(target_os = "android", target_os = "ios"))]
-                    log::warn!("Terminal action received but not supported on this platform");
                 }
                 _ => {}
             }
@@ -3918,7 +3916,7 @@ impl Connection {
                 }
             }
         }
-        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        #[cfg(not(target_os = "ios"))]
         if let Ok(q) = o.terminal_persistent.enum_value() {
             if q != BoolOption::NotSet {
                 self.update_terminal_persistence(q == BoolOption::Yes).await;
@@ -4635,43 +4633,61 @@ impl Connection {
         self.send(msg_out).await;
     }
 
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    #[cfg(not(target_os = "ios"))]
     async fn update_terminal_persistence(&mut self, persistent: bool) {
         self.terminal_persistent = persistent;
         terminal_service::set_persistent(&self.terminal_service_id, persistent).ok();
     }
 
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    #[cfg(not(target_os = "ios"))]
     async fn init_terminal_service(&mut self) {
-        debug_assert!(self.terminal_user_token.is_some());
-        let Some(user_token) = self.terminal_user_token.clone() else {
-            // unreachable, but keep it for safety
-            log::error!("Terminal user token is not set.");
-            return;
-        };
         if self.terminal_service_id.is_empty() {
             self.terminal_service_id = terminal_service::generate_service_id();
         }
+        #[cfg(not(target_os = "android"))]
+        let s = {
+            debug_assert!(self.terminal_user_token.is_some());
+            let Some(user_token) = self.terminal_user_token.clone() else {
+                // unreachable, but keep it for safety
+                log::error!("Terminal user token is not set.");
+                return;
+            };
+            Box::new(terminal_service::new(
+                self.terminal_service_id.clone(),
+                self.terminal_persistent,
+                user_token.to_terminal_service_token(),
+            ))
+        };
+        #[cfg(target_os = "android")]
         let s = Box::new(terminal_service::new(
             self.terminal_service_id.clone(),
             self.terminal_persistent,
-            user_token.to_terminal_service_token(),
+            None,
         ));
         s.on_subscribe(self.inner.clone());
         self.terminal_generic_service = Some(s);
     }
 
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    #[cfg(not(target_os = "ios"))]
     async fn handle_terminal_action(&mut self, action: TerminalAction) -> ResultType<()> {
-        debug_assert!(self.terminal_user_token.is_some());
-        let Some(user_token) = self.terminal_user_token.clone() else {
-            // unreacheable, but keep it for safety
-            bail!("Terminal user token is not set.");
+        #[cfg(not(target_os = "android"))]
+        let mut proxy = {
+            debug_assert!(self.terminal_user_token.is_some());
+            let Some(user_token) = self.terminal_user_token.clone() else {
+                // unreacheable, but keep it for safety
+                bail!("Terminal user token is not set.");
+            };
+            terminal_service::TerminalServiceProxy::new(
+                self.terminal_service_id.clone(),
+                Some(self.terminal_persistent),
+                user_token.to_terminal_service_token(),
+            )
         };
+        #[cfg(target_os = "android")]
         let mut proxy = terminal_service::TerminalServiceProxy::new(
             self.terminal_service_id.clone(),
             Some(self.terminal_persistent),
-            user_token.to_terminal_service_token(),
+            None,
         );
 
         match proxy.handle_action(&action) {
