@@ -13,6 +13,10 @@ lazy_static! {
 pub struct Capturer {
     display: Display,
     rgba: Vec<u8>,
+    //派宝改动：旋转数据辅助变量
+    tmp_bgra: Vec<u8>,
+    rotation: u16,
+    //改动结束
     saved_raw_data: Vec<u8>, // for faster compare and copy
 }
 
@@ -21,6 +25,10 @@ impl Capturer {
         Ok(Capturer {
             display,
             rgba: Vec::new(),
+            //派宝改动：旋转数据辅助变量
+            tmp_bgra: Vec::new(),
+            rotation: 360,
+            //改动结束
             saved_raw_data: Vec::new(),
         })
     }
@@ -37,10 +45,58 @@ impl Capturer {
 impl crate::TraitCapturer for Capturer {
     fn frame<'a>(&'a mut self, _timeout: Duration) -> io::Result<Frame<'a>> {
         if get_video_raw(&mut self.rgba, &mut self.saved_raw_data).is_some() {
+            // 计算目标宽高（对外一致），以及源缓冲区实际宽高（可能因 90/270 互换）
+            let target_w = self.width();
+            let target_h = self.height();
+            let rotation = get_rotation().unwrap_or(0) % 360;
+            self.rotation = rotation as u16;
+
+            let (src_w, src_h) = match rotation {
+                90 | 270 => (target_h, target_w),
+                _ => (target_w, target_h),
+            };
+
+            // 对于 0/360 不旋转，直接输出
+            if rotation == 0 || rotation == 360 {
+                return Ok(Frame::PixelBuffer(PixelBuffer::new(
+                    &self.rgba,
+                    target_w,
+                    target_h,
+                )));
+            }
+
+            // 其他角度进行旋转，输出尺寸保持 target_w x target_h
+            let src_stride = src_w * 4;
+            let dst_stride = target_w * 4; // 旋转后输出的行跨度以目标宽为准
+            let dst_len = target_w * target_h * 4;
+            self.tmp_bgra.resize(dst_len, 0);
+
+            let mode = match rotation {
+                90 => crate::RotationMode::kRotate90,
+                180 => crate::RotationMode::kRotate180,
+                270 => crate::RotationMode::kRotate270,
+                _ => crate::RotationMode::kRotate0,
+            };
+
+            unsafe {
+                crate::common::ARGBRotate(
+                    self.rgba.as_ptr(),
+                    src_stride as _,
+                    self.tmp_bgra.as_mut_ptr(),
+                    dst_stride as _,
+                    src_w as _,
+                    src_h as _,
+                    mode,
+                );
+            }
+
+            std::mem::swap(&mut self.rgba, &mut self.tmp_bgra);
+            self.tmp_bgra.clear();
+
             Ok(Frame::PixelBuffer(PixelBuffer::new(
                 &self.rgba,
-                self.width(),
-                self.height(),
+                target_w,
+                target_h,
             )))
         } else {
             return Err(io::ErrorKind::WouldBlock.into());
@@ -187,3 +243,16 @@ pub fn is_start() -> Option<bool> {
     let res = call_main_service_get_by_name("is_start").ok()?;
     Some(res == "true")
 }
+
+//派宝改动：与Android端交互获取旋转角度
+fn get_rotation() -> Option<u16> {
+    let res = call_main_service_get_by_name("rotation").ok()?;
+    if let Ok(json) = serde_json::from_str::<HashMap<String, Value>>(&res) {
+        if let Some(Value::Number(rotation)) = json.get("rotation") {
+            let rotation = rotation.as_i64()? as _;
+            return Some(rotation);
+        }
+    }
+    Some(0)
+}
+//改动结束

@@ -45,6 +45,10 @@ import org.json.JSONObject
 import java.nio.ByteBuffer
 import kotlin.math.max
 import kotlin.math.min
+import android.os.Environment
+import java.io.File
+import java.io.FileInputStream
+import java.util.Properties
 
 const val DEFAULT_NOTIFY_TITLE = "RustDesk"
 const val DEFAULT_NOTIFY_TEXT = "Service is running"
@@ -105,6 +109,12 @@ class MainService : Service() {
             }
             "is_start" -> {
                 isStart.toString()
+            }
+            "rotation" -> {
+                val rotation = getCustomRotation()
+                JSONObject().apply {
+                    put("rotation", rotation)
+                }.toString()
             }
             else -> ""
         }
@@ -369,10 +379,13 @@ class MainService : Service() {
             null
         } else {
             Log.d(logTag, "ImageReader.newInstance:INFO:$SCREEN_INFO")
+            val rotation = getCustomRotation()
+            val capW = if (rotation == 90 || rotation == 270) SCREEN_INFO.height else SCREEN_INFO.width
+            val capH = if (rotation == 90 || rotation == 270) SCREEN_INFO.width else SCREEN_INFO.height
             imageReader =
                 ImageReader.newInstance(
-                    SCREEN_INFO.width,
-                    SCREEN_INFO.height,
+                    capW,
+                    capH,
                     PixelFormat.RGBA_8888,
                     4
                 ).apply {
@@ -535,20 +548,44 @@ class MainService : Service() {
     // Reuse virtualDisplay if it exists, to avoid media projection confirmation dialog every connection.
     private fun createOrSetVirtualDisplay(mp: MediaProjection, s: Surface) {
         try {
+            val rotation = getCustomRotation()
+            val capW = if (rotation == 90 || rotation == 270) SCREEN_INFO.height else SCREEN_INFO.width
+            val capH = if (rotation == 90 || rotation == 270) SCREEN_INFO.width else SCREEN_INFO.height
             virtualDisplay?.let {
-                it.resize(SCREEN_INFO.width, SCREEN_INFO.height, SCREEN_INFO.dpi)
+                it.resize(capW, capH, SCREEN_INFO.dpi)
                 it.setSurface(s)
+                Log.d(logTag, "VirtualDisplay reused and resized to ${capW}x${capH}, dpi=${SCREEN_INFO.dpi}")
             } ?: let {
                 virtualDisplay = mp.createVirtualDisplay(
                     "RustDeskVD",
-                    SCREEN_INFO.width, SCREEN_INFO.height, SCREEN_INFO.dpi, VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                    capW, capH, SCREEN_INFO.dpi, VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                     s, null, null
                 )
+                Log.d(logTag, "VirtualDisplay created at ${capW}x${capH}, dpi=${SCREEN_INFO.dpi}")
             }
         } catch (e: SecurityException) {
             Log.w(logTag, "createOrSetVirtualDisplay: got SecurityException, re-requesting confirmation");
             // This initiates a prompt dialog for the user to confirm screen projection.
             requestMediaProjection()
+        }
+    }
+
+    // 读取外部存储 /robot/config/base.properties 的 capture_rotation
+    private fun getCustomRotation(): Int {
+        return try {
+            val root = Environment.getExternalStorageDirectory()
+            val file = File(root, "robot/config/base.properties")
+            if (!file.exists() || !file.isFile) return 0
+            val props = Properties()
+            FileInputStream(file).use { fis -> props.load(fis) }
+            val v = props.getProperty("capture_rotation", "0").trim()
+            val r = v.toIntOrNull() ?: 0
+            when (r % 360) {
+                0, 90, 180, 270 -> r % 360
+                else -> 0
+            }
+        } catch (e: Exception) {
+            0
         }
     }
 
