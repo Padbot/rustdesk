@@ -1,0 +1,12 @@
+name: PadBot Flutter Build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  run-padbot-flutter-build:
+    uses: ./.github/workflows/flutter-android.yml
+    secrets: inherit
+    with:
+      upload-artifact: true
+      upload-tag: "padbot"
