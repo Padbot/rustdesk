@@ -575,17 +575,23 @@ class MainService : Service() {
         return try {
             val root = Environment.getExternalStorageDirectory()
             val file = File(root, "robot/config/base.properties")
-            if (!file.exists() || !file.isFile) return 0
+            val fallback = if (Build.MODEL == "rk3399-all") 270 else 0
+            if (!file.exists() || !file.isFile) return fallback
             val props = Properties()
             FileInputStream(file).use { fis -> props.load(fis) }
-            val v = props.getProperty("capture_rotation", "0").trim()
-            val r = v.toIntOrNull() ?: 0
-            when (r % 360) {
-                0, 90, 180, 270 -> r % 360
-                else -> 0
+            val v = props.getProperty("capture_rotation")?.trim()
+            val r = v?.toIntOrNull()
+            if (r == null) {
+                fallback
+            } else {
+                when (r % 360) {
+                    0, 90, 180, 270 -> r % 360
+                    else -> 0
+                }
             }
         } catch (e: Exception) {
-            0
+            val fallback = if (Build.MODEL == "rk3399-all") 270 else 0
+            fallback
         }
     }
 
