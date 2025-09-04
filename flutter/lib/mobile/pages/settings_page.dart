@@ -172,8 +172,10 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
         _checkUpdateOnStartup = checkUpdateOnStartup;
       }
 
+      // 默认未设置时视为禁用，仅当显式为 'N' 时视为启用
+      final _fwOpt = bind.mainGetLocalOption(key: kOptionDisableFloatingWindow);
       var floatingWindowDisabled =
-          bind.mainGetLocalOption(key: kOptionDisableFloatingWindow) == "Y" ||
+          (_fwOpt != 'N') ||
               !await AndroidPermissionManager.check(kSystemAlertWindow);
       if (floatingWindowDisabled != _floatingWindowDisabled) {
         update = true;
@@ -595,9 +597,10 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
         }
       }
       final disable = !toValue;
+      // 显式写入 'Y' 禁用，'N' 启用，避免 defaultOptionNo 为空时被视为禁用
       bind.mainSetLocalOption(
           key: kOptionDisableFloatingWindow,
-          value: disable ? 'Y' : defaultOptionNo);
+          value: disable ? 'Y' : 'N');
       setState(() => _floatingWindowDisabled = disable);
       gFFI.serverModel.androidUpdatekeepScreenOn();
     }
