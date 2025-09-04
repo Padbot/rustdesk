@@ -414,7 +414,8 @@ class ServerModel with ChangeNotifier {
       }
     } else {
       await checkRequestNotificationPermission();
-      if (bind.mainGetLocalOption(key: kOptionDisableFloatingWindow) != 'Y') {
+      // 仅当显式为 'N'（启用悬浮窗）时才检查悬浮窗权限，未设置或其他值默认禁用
+      if (bind.mainGetLocalOption(key: kOptionDisableFloatingWindow) == 'N') {
         await checkFloatingWindowPermission();
       }
       if (!await AndroidPermissionManager.check(kManageExternalStorage)) {
@@ -787,8 +788,9 @@ class ServerModel with ChangeNotifier {
 
   void androidUpdatekeepScreenOn() async {
     if (!isAndroid) return;
+    // 默认未设置时视为禁用，仅当显式为 'N' 时视为启用
     var floatingWindowDisabled =
-        bind.mainGetLocalOption(key: kOptionDisableFloatingWindow) == "Y" ||
+        bind.mainGetLocalOption(key: kOptionDisableFloatingWindow) != 'N' ||
             !await AndroidPermissionManager.check(kSystemAlertWindow);
     final keepScreenOn = floatingWindowDisabled
         ? KeepScreenOn.never
