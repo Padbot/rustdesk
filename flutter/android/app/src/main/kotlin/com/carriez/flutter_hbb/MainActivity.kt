@@ -395,10 +395,9 @@ class MainActivity : FlutterActivity() {
 
     override fun onStop() {
         super.onStop()
-        val disableFloatingWindow = FFI.getLocalOption("disable-floating-window") == "Y"
-        if (!disableFloatingWindow && MainService.isReady) {
-            startService(Intent(this, FloatingWindowService::class.java))
-        }
+        // 禁止启动悬浮窗服务：无论任何设置或状态，都不再启动 FloatingWindowService
+        // 原逻辑：在未禁用且 MainService 就绪时启动悬浮窗
+        // 已移除以彻底屏蔽悬浮窗显示
     }
 
     override fun onStart() {

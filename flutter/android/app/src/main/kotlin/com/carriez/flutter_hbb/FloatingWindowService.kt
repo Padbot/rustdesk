@@ -65,6 +65,10 @@ class FloatingWindowService : Service(), View.OnTouchListener {
 
     override fun onCreate() {
         super.onCreate()
+        // 屏蔽悬浮窗服务：服务创建即自我停止，防止任何情况下创建或显示悬浮窗
+        Log.w(logTag, "FloatingWindowService is disabled by policy, calling stopSelf().")
+        stopSelf()
+        return
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         try {
             if (firstCreate) {
