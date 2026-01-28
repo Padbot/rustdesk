@@ -37,6 +37,36 @@ lazy_static::lazy_static! {
     static ref TEXTURE_RENDER_KEY: Arc<AtomicI32> = Arc::new(AtomicI32::new(0));
 }
 
+#[cfg(target_os = "android")]
+fn try_set_device_id_from_robot_properties() {
+    use hbb_common::log;
+    const PATH: &str = "/sdcard/robot/config/base.properties";
+    let content = match std::fs::read_to_string(PATH) {
+        Ok(s) => s,
+        Err(e) => {
+            log::debug!("robot base.properties not found/readable: {}", e);
+            return;
+        }
+    };
+    for raw in content.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some((k, v)) = line.split_once('=') {
+            if k.trim() == "robot_serial_number" {
+                let id = v.trim().to_string();
+                if !id.is_empty() {
+                    *crate::common::DEVICE_ID.lock().unwrap() = id.clone();
+                    hbb_common::config::Config::set_id(&id);
+                    log::info!("Set device id from robot_serial_number: {}", id);
+                }
+                break;
+            }
+        }
+    }
+}
+
 fn initialize(app_dir: &str, custom_client_config: &str) {
     flutter::async_tasks::start_flutter_async_runner();
     // `APP_DIR` is set in `main_get_data_dir_ios()` on iOS.
@@ -65,6 +95,8 @@ fn initialize(app_dir: &str, custom_client_config: &str) {
         scrap::mediacodec::check_mediacodec();
         crate::common::test_rendezvous_server();
         crate::common::test_nat_type();
+        // Try override device id from sdcard robot properties if available
+        try_set_device_id_from_robot_properties();
     }
     #[cfg(target_os = "ios")]
     {
