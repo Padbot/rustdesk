@@ -2882,7 +2882,7 @@ class ServerConfig {
   /// from local options
   ServerConfig.fromOptions(Map<String, dynamic> options)
       : idServer = options['custom-rendezvous-server'] ?? "",
-        relayServer = options['relay-server'] ?? "",
+        relayServer = (options['relay-server'] ?? ""),
         apiServer = options['api-server'] ?? "",
         key = options['key'] ?? "";
 }
@@ -3489,6 +3489,12 @@ Future<bool> setServerConfig(
   config.relayServer = removeEndSlash(config.relayServer.trim());
   config.apiServer = removeEndSlash(config.apiServer.trim());
   config.key = config.key.trim();
+  if (config.idServer.isEmpty && !isWeb && !isIOS) {
+    config.idServer = 'rd.padbot.com';
+  }
+  if (config.relayServer.isEmpty && !isWeb && !isIOS) {
+    config.relayServer = 'rd.padbot.com';
+  }
   if (controllers != null) {
     controllers[0].text = config.idServer;
     controllers[1].text = config.relayServer;
