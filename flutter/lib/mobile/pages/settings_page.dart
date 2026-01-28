@@ -158,23 +158,12 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
         }
       }
 
-      if (await checkAndUpdateStartOnBoot()) {
-        update = true;
-      }
-
-      // start on boot depends on ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS and SYSTEM_ALERT_WINDOW
-      var enableStartOnBoot =
-          await gFFI.invokeMethod(AndroidChannel.kGetStartOnBootOpt);
-      if (enableStartOnBoot) {
-        if (!await canStartOnBoot()) {
-          enableStartOnBoot = false;
-          gFFI.invokeMethod(AndroidChannel.kSetStartOnBootOpt, false);
+      if (isAndroid) {
+        await gFFI.invokeMethod(AndroidChannel.kSetStartOnBootOpt, true);
+        if (_enableStartOnBoot != true) {
+          update = true;
+          _enableStartOnBoot = true;
         }
-      }
-
-      if (enableStartOnBoot != _enableStartOnBoot) {
-        update = true;
-        _enableStartOnBoot = enableStartOnBoot;
       }
 
       var checkUpdateOnStartup =
@@ -238,8 +227,7 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       () async {
         final ibs = await checkAndUpdateIgnoreBatteryStatus();
-        final sob = await checkAndUpdateStartOnBoot();
-        if (ibs || sob) {
+        if (ibs) {
           setState(() {});
         }
       }();
@@ -251,18 +239,6 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
         kRequestIgnoreBatteryOptimizations);
     if (_ignoreBatteryOpt != res) {
       _ignoreBatteryOpt = res;
-      return true;
-    } else {
-      return false;
-    }
-  }
-
-  Future<bool> checkAndUpdateStartOnBoot() async {
-    if (!await canStartOnBoot() && _enableStartOnBoot) {
-      _enableStartOnBoot = false;
-      debugPrint(
-          "checkAndUpdateStartOnBoot and set _enableStartOnBoot -> false");
-      gFFI.invokeMethod(AndroidChannel.kSetStartOnBootOpt, false);
       return true;
     } else {
       return false;
@@ -558,38 +534,6 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
                 }
               }));
     }
-    enhancementsTiles.add(SettingsTile.switchTile(
-        initialValue: _enableStartOnBoot,
-        title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(translate('Start on boot')),
-          Text(
-              '* ${translate('Start the screen sharing service on boot, requires special permissions')}',
-              style: Theme.of(context).textTheme.bodySmall),
-        ]),
-        onToggle: (toValue) async {
-          if (toValue) {
-            // 1. request kIgnoreBatteryOptimizations
-            if (!await AndroidPermissionManager.check(
-                kRequestIgnoreBatteryOptimizations)) {
-              if (!await AndroidPermissionManager.request(
-                  kRequestIgnoreBatteryOptimizations)) {
-                return;
-              }
-            }
-
-            // 2. request kSystemAlertWindow
-            if (!await AndroidPermissionManager.check(kSystemAlertWindow)) {
-              if (!await AndroidPermissionManager.request(kSystemAlertWindow)) {
-                return;
-              }
-            }
-
-            // (Optional) 3. request input permission
-          }
-          setState(() => _enableStartOnBoot = toValue);
-
-          gFFI.invokeMethod(AndroidChannel.kSetStartOnBootOpt, toValue);
-        }));
 
     if (!bind.isCustomClient()) {
       enhancementsTiles.add(
