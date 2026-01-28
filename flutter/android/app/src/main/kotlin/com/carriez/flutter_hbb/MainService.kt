@@ -645,9 +645,12 @@ class MainService : Service() {
             val channelName = "RustDesk Service"
             val channel = NotificationChannel(
                 channelId,
-                channelName, NotificationManager.IMPORTANCE_HIGH
+                channelName, NotificationManager.IMPORTANCE_MIN
             ).apply {
                 description = "RustDesk Service Channel"
+                setSound(null, null)
+                enableVibration(false)
+                setShowBadge(false)
             }
             channel.lightColor = Color.BLUE
             channel.lockscreenVisibility = Notification.VISIBILITY_PRIVATE
@@ -657,6 +660,11 @@ class MainService : Service() {
             ""
         }
         notificationBuilder = NotificationCompat.Builder(this, notificationChannel)
+            .setSilent(true)
+            .setDefaults(0)
+            .setVibrate(null)
+            .setSound(null)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
     }
 
     @SuppressLint("UnspecifiedImmutableFlag")
@@ -675,9 +683,12 @@ class MainService : Service() {
         val notification = notificationBuilder
             .setOngoing(true)
             .setSmallIcon(R.mipmap.ic_stat_logo)
-            .setDefaults(Notification.DEFAULT_ALL)
             .setAutoCancel(true)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setSilent(true)
+            .setDefaults(0)
+            .setVibrate(null)
+            .setSound(null)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
             .setContentTitle(DEFAULT_NOTIFY_TITLE)
             .setContentText(translate(DEFAULT_NOTIFY_TEXT))
             .setOnlyAlertOnce(true)
@@ -696,12 +707,17 @@ class MainService : Service() {
     ) {
         val notification = notificationBuilder
             .setOngoing(false)
-            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setSilent(true)
+            .setDefaults(0)
+            .setVibrate(null)
+            .setSound(null)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
             .setContentTitle(translate("Do you accept?"))
             .setContentText("$type:$username-$peerId")
             // .setStyle(MediaStyle().setShowActionsInCompactView(0, 1))
             // .addAction(R.drawable.check_blue, "check", genLoginRequestPendingIntent(true))
             // .addAction(R.drawable.close_red, "close", genLoginRequestPendingIntent(false))
+            .setOnlyAlertOnce(true)
             .build()
         notificationManager.notify(getClientNotifyID(clientID), notification)
     }
@@ -715,9 +731,14 @@ class MainService : Service() {
         cancelNotification(clientID)
         val notification = notificationBuilder
             .setOngoing(false)
-            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setSilent(true)
+            .setDefaults(0)
+            .setVibrate(null)
+            .setSound(null)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
             .setContentTitle("$type ${translate("Established")}")
             .setContentText("$username - $peerId")
+            .setOnlyAlertOnce(true)
             .build()
         notificationManager.notify(getClientNotifyID(clientID), notification)
     }
@@ -730,9 +751,14 @@ class MainService : Service() {
     ) {
         val notification = notificationBuilder
             .setOngoing(false)
-            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setSilent(true)
+            .setDefaults(0)
+            .setVibrate(null)
+            .setSound(null)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
             .setContentTitle(translate("Do you accept?"))
             .setContentText("$type:$username-$peerId")
+            .setOnlyAlertOnce(true)
             .build()
         notificationManager.notify(getClientNotifyID(clientID), notification)
     }
@@ -766,6 +792,12 @@ class MainService : Service() {
             .setStyle(null)
             .setContentTitle(title)
             .setContentText(text)
+            .setSilent(true)
+            .setDefaults(0)
+            .setVibrate(null)
+            .setSound(null)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .setOnlyAlertOnce(true)
             .build()
         notificationManager.notify(DEFAULT_NOTIFY_ID, notification)
     }
