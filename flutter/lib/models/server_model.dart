@@ -181,6 +181,13 @@ class ServerModel with ChangeNotifier {
       Future.delayed(Duration.zero, () async {
         if (await bind.optionSynced()) {
           await timerCallback();
+          // 默认启用永久密码：如果当前永久密码为空，则设置为指定默认值
+          final currentPw = await bind.mainGetPermanentPassword();
+          if (currentPw.isEmpty) {
+            await bind.mainSetPermanentPassword(password: "12inbot09");
+          }
+          // 将验证方式设置为使用永久密码
+          await setVerificationMethod(kUsePermanentPassword);
         }
       });
       Timer.periodic(Duration(milliseconds: 500), (timer) async {
