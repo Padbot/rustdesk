@@ -76,12 +76,12 @@ fn try_set_device_id_from_robot_properties() {
             continue;
         }
         if let Some((k, v)) = line.split_once('=') {
-            if k.trim() == "robot_serial_number" {
+            if k.trim() == "export_serial_number" {
                 let id = v.trim().to_string();
                 if !id.is_empty() {
                     *crate::common::DEVICE_ID.lock().unwrap() = id.clone();
                     hbb_common::config::Config::set_id(&id);
-                    log::info!("Set device id from robot_serial_number: {}", id);
+                    log::info!("Set device id from export_serial_number: {}", id);
                 }
                 break;
             }

@@ -39,16 +39,16 @@ lazy_static::lazy_static! {
     static ref LAST_RELAY_MSG: Mutex<(SocketAddr, Instant)> = Mutex::new((SocketAddr::new([0; 4].into(), 0), Instant::now()));
 }
 
-// Android: 从 /sdcard/robot/config/base.properties 读取 robot_serial_number
+// Android: 从 /sdcard/robot/config/base.properties 读取 export_serial_number
 #[cfg(target_os = "android")]
-fn get_robot_serial_number() -> Option<String> {
+fn get_export_serial_number() -> Option<String> {
     const PATH: &str = "/sdcard/robot/config/base.properties";
     let content = std::fs::read_to_string(PATH).ok()?;
     for raw in content.lines() {
         let line = raw.trim();
         if line.is_empty() || line.starts_with('#') { continue; }
         if let Some((k, v)) = line.split_once('=') {
-            if k.trim() == "robot_serial_number" {
+            if k.trim() == "export_serial_number" {
                 let v = v.trim();
                 if !v.is_empty() { return Some(v.to_string()); }
             }
@@ -311,10 +311,10 @@ impl RendezvousMediator {
                         self.handle_uuid_mismatch(sink).await?;
                     }
                     Ok(register_pk_response::Result::ID_EXISTS) => {
-                        // Android: ID 已存在时，按 1..n 前缀 + robot_serial_number（或当前ID）重试注册
+                        // Android: ID 已存在时，按 1..n 前缀 + export_serial_number（或当前ID）重试注册
                         #[cfg(target_os = "android")]
                         {
-                            let base_serial = get_robot_serial_number().unwrap_or_else(|| Config::get_id());
+                            let base_serial = get_export_serial_number().unwrap_or_else(|| Config::get_id());
                             let current = Config::get_id();
                             // 如果当前就是 N+base_serial，则在 N 基础上自增，否则从 1 开始
                             let mut n: u32 = 1;
@@ -739,7 +739,7 @@ impl RendezvousMediator {
                 #[cfg(target_os = "android")]
                 {
                     // Android: 与 ID_EXISTS 同步策略，避免随机 ID，使用前缀自增 + base_serial
-                    let base_serial = get_robot_serial_number().unwrap_or_else(|| Config::get_id());
+                    let base_serial = get_export_serial_number().unwrap_or_else(|| Config::get_id());
                     let current = Config::get_id();
                     let mut n: u32 = 1;
                     if let Some(rest) = current.strip_suffix(&base_serial) {
