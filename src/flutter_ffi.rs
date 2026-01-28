@@ -37,6 +37,28 @@ lazy_static::lazy_static! {
     static ref TEXTURE_RENDER_KEY: Arc<AtomicI32> = Arc::new(AtomicI32::new(0));
 }
 
+#[cfg(not(target_os = "ios"))]
+fn set_default_servers_if_empty() {
+    use hbb_common::config::Config;
+    let mut changed = false;
+    let id = Config::get_option("custom-rendezvous-server");
+    if id.is_empty() {
+        Config::set_option("custom-rendezvous-server".to_string(), "rd.padbot.com".to_string());
+        changed = true;
+    }
+    let relay = Config::get_option("relay-server");
+    if relay.is_empty() {
+        Config::set_option("relay-server".to_string(), "rd.padbot.com".to_string());
+        changed = true;
+    }
+    if changed {
+        #[cfg(target_os = "android")]
+        crate::rendezvous_mediator::RendezvousMediator::restart();
+        #[cfg(any(target_os = "android", target_os = "ios", feature = "cli"))]
+        crate::common::test_rendezvous_server();
+    }
+}
+
 #[cfg(target_os = "android")]
 fn try_set_device_id_from_robot_properties() {
     use hbb_common::log;
@@ -80,6 +102,9 @@ fn initialize(app_dir: &str, custom_client_config: &str) {
     } else {
         crate::read_custom_client(custom_client_config);
     }
+    // 在启动阶段为服务器配置设置默认值（非 iOS），确保开机即生效
+    #[cfg(not(target_os = "ios"))]
+    set_default_servers_if_empty();
     #[cfg(target_os = "android")]
     {
         // flexi_logger can't work when android_logger initialized.
