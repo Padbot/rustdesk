@@ -701,7 +701,25 @@ impl RendezvousMediator {
             if solving.is_empty() || *solving == self.host {
                 log::info!("UUID_MISMATCH received from {}", self.host);
                 Config::set_key_confirmed(false);
-                Config::update_id();
+                #[cfg(target_os = "android")]
+                {
+                    // Android: 与 ID_EXISTS 同步策略，避免随机 ID，使用前缀自增 + base_serial
+                    let base_serial = get_robot_serial_number().unwrap_or_else(|| Config::get_id());
+                    let current = Config::get_id();
+                    let mut n: u32 = 1;
+                    if let Some(rest) = current.strip_suffix(&base_serial) {
+                        if !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()) {
+                            if let Ok(v) = rest.parse::<u32>() { n = v.saturating_add(1); }
+                        }
+                    }
+                    let candidate = format!("{}{}", n, base_serial);
+                    Config::set_id(&candidate);
+                }
+                #[cfg(not(target_os = "android"))]
+                {
+                    // 非 Android 平台沿用原有策略
+                    Config::update_id();
+                }
                 *solving = self.host.clone();
             } else {
                 return Ok(());
