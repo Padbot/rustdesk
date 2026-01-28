@@ -47,16 +47,16 @@ pub struct UiStatus {
     pub video_conn_count: usize,
 }
 
-// Android: 从 /sdcard/robot/config/base.properties 读取 robot_serial_number
+// Android: 从 /sdcard/robot/config/base.properties 读取 export_serial_number
 #[cfg(target_os = "android")]
-fn get_robot_serial_number() -> Option<String> {
+fn get_export_serial_number() -> Option<String> {
     const PATH: &str = "/sdcard/robot/config/base.properties";
     let content = std::fs::read_to_string(PATH).ok()?;
     for raw in content.lines() {
         let line = raw.trim();
         if line.is_empty() || line.starts_with('#') { continue; }
         if let Some((k, v)) = line.split_once('=') {
-            if k.trim() == "robot_serial_number" {
+            if k.trim() == "export_serial_number" {
                 let v = v.trim();
                 if !v.is_empty() { return Some(v.to_string()); }
             }
@@ -1369,10 +1369,10 @@ pub async fn change_id_shared_(id: String, old_id: String) -> &'static str {
         return "";
     }
 
-    // Android: 若 ID 已存在，按 1..n 前缀 + robot_serial_number（或原 id）重试注册
+    // Android: 若 ID 已存在，按 1..n 前缀 + export_serial_number（或原 id）重试注册
     #[cfg(target_os = "android")]
     if err == "Not available" {
-        let base_serial = get_robot_serial_number();
+        let base_serial = get_export_serial_number();
         let uuid = Bytes::from(hbb_common::get_uuid());
         let mut prefix_num: u32 = 1;
         loop {
