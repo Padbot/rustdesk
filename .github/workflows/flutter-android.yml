@@ -55,20 +55,6 @@ jobs:
             extra-build-features: "",
             openssl-arch: android-arm64
           }
-          - {
-            arch: armv7,
-            target: armv7-linux-androideabi,
-            os: ubuntu-24.04,
-            extra-build-features: "",
-            openssl-arch: android-arm
-          }
-          - {
-            arch: x86_64,
-            target: x86_64-linux-android,
-            os: ubuntu-24.04,
-            extra-build-features: "",
-            openssl-arch: android-x86_64
-          }
     steps:
       - name: Free Disk Space (Ubuntu)
         uses: jlumbroso/free-disk-space@main
@@ -313,7 +299,7 @@ jobs:
   build-rustdesk-android-universal:
     needs: [build-rustdesk-android]
     name: build rustdesk android universal apk
-    if: ${{ inputs.upload-artifact }}
+    if: false
     runs-on: ubuntu-24.04
     env:
       reltype: release
