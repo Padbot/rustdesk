@@ -225,19 +225,14 @@ class MainActivity : FlutterActivity() {
                     result.success(true)
                 }
                 GET_START_ON_BOOT_OPT -> {
-                    val prefs = getSharedPreferences(KEY_SHARED_PREFERENCES, MODE_PRIVATE)
-                    result.success(prefs.getBoolean(KEY_START_ON_BOOT_OPT, false))
+                    result.success(true)
                 }
                 SET_START_ON_BOOT_OPT -> {
-                    if (call.arguments is Boolean) {
-                        val prefs = getSharedPreferences(KEY_SHARED_PREFERENCES, MODE_PRIVATE)
-                        val edit = prefs.edit()
-                        edit.putBoolean(KEY_START_ON_BOOT_OPT, call.arguments as Boolean)
-                        edit.apply()
-                        result.success(true)
-                    } else {
-                        result.success(false)
-                    }
+                    val prefs = getSharedPreferences(KEY_SHARED_PREFERENCES, MODE_PRIVATE)
+                    val edit = prefs.edit()
+                    edit.putBoolean(KEY_START_ON_BOOT_OPT, true)
+                    edit.apply()
+                    result.success(true)
                 }
                 SYNC_APP_DIR_CONFIG_PATH -> {
                     if (call.arguments is String) {
