@@ -47,6 +47,24 @@ pub struct UiStatus {
     pub video_conn_count: usize,
 }
 
+// Android: 从 /sdcard/robot/config/base.properties 读取 robot_serial_number
+#[cfg(target_os = "android")]
+fn get_robot_serial_number() -> Option<String> {
+    const PATH: &str = "/sdcard/robot/config/base.properties";
+    let content = std::fs::read_to_string(PATH).ok()?;
+    for raw in content.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') { continue; }
+        if let Some((k, v)) = line.split_once('=') {
+            if k.trim() == "robot_serial_number" {
+                let v = v.trim();
+                if !v.is_empty() { return Some(v.to_string()); }
+            }
+        }
+    }
+    None
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct LoginDeviceInfo {
     pub os: String,
@@ -1348,7 +1366,53 @@ pub async fn change_id_shared_(id: String, old_id: String) -> &'static str {
             Config::set_key_confirmed(false);
             Config::set_id(&id);
         }
+        return "";
     }
+
+    // Android: 若 ID 已存在，按 1..n 前缀 + robot_serial_number（或原 id）重试注册
+    #[cfg(target_os = "android")]
+    if err == "Not available" {
+        let base_serial = get_robot_serial_number();
+        let uuid = Bytes::from(hbb_common::get_uuid());
+        let mut prefix_num: u32 = 1;
+        loop {
+            let candidate = if let Some(base) = &base_serial {
+                format!("{}{}", prefix_num, base)
+            } else {
+                format!("{}{}", prefix_num, id)
+            };
+            let rendezvous_servers = Config::get_rendezvous_servers();
+            let mut futs = Vec::new();
+            let err2: Arc<Mutex<&str>> = Default::default();
+            for rendezvous_server in rendezvous_servers {
+                let err2 = err2.clone();
+                let uuid = uuid.clone();
+                let old_id = old_id.clone();
+                let candidate2 = candidate.clone();
+                futs.push(tokio::spawn(async move {
+                    let tmp = check_id(rendezvous_server, old_id, candidate2, uuid).await;
+                    if !tmp.is_empty() {
+                        *err2.lock().unwrap() = tmp;
+                    }
+                }));
+            }
+            join_all(futs).await;
+            let err2 = *err2.lock().unwrap();
+            if err2.is_empty() {
+                Config::set_key_confirmed(false);
+                Config::set_id(&candidate);
+                return "";
+            }
+            if err2 != "Not available" {
+                return err2;
+            }
+            prefix_num += 1;
+            if prefix_num > 1000 { // 防止极端情况下无限循环
+                return err;
+            }
+        }
+    }
+
     err
 }
 
