@@ -24,6 +24,14 @@ use std::{
     time::{Duration, Instant},
 };
 
+// Windows-specific imports from terminal_helper module
+#[cfg(target_os = "windows")]
+use super::terminal_helper::{
+    create_named_pipe_server, encode_helper_message, encode_resize_message,
+    is_helper_process_running, launch_terminal_helper_with_token, wait_for_pipe_connection,
+    HelperProcessGuard, OwnedHandle, SendableHandle, WinCloseHandle, WinTerminateProcess,
+    WinWaitForSingleObject, MSG_TYPE_DATA, PIPE_CONNECTION_TIMEOUT_MS, WIN_WAIT_OBJECT_0,
+};
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
 
@@ -153,28 +161,8 @@ pub fn generate_service_id() -> String {
 fn get_default_shell() -> String {
     #[cfg(target_os = "windows")]
     {
-        // Try PowerShell Core first (cross-platform version)
-        // Common installation paths for PowerShell Core
-        let pwsh_paths = [
-            "pwsh.exe",
-            r"C:\Program Files\PowerShell\7\pwsh.exe",
-            r"C:\Program Files\PowerShell\6\pwsh.exe",
-        ];
-
-        for path in &pwsh_paths {
-            if std::path::Path::new(path).exists() {
-                return path.to_string();
-            }
-        }
-
-        // Try Windows PowerShell (should be available on all Windows systems)
-        let powershell_path = r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe";
-        if std::path::Path::new(powershell_path).exists() {
-            return powershell_path.to_string();
-        }
-
-        // Final fallback to cmd.exe
-        std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string())
+        // Use shared implementation from terminal_helper
+        super::terminal_helper::get_default_shell()
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -399,7 +387,30 @@ pub fn get_terminal_session_count(include_zombie_tasks: bool) -> usize {
     c
 }
 
-pub type UserToken = u64;
+/// User token wrapper for cross-module use.
+///
+/// # Design Note
+/// On Windows, this type is defined in terminal_helper.rs and re-exported here.
+/// On non-Windows platforms, it's defined here directly.
+/// This design avoids circular dependencies while keeping the API consistent.
+/// Both definitions MUST have identical public API (new, as_raw methods).
+#[cfg(not(target_os = "windows"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UserToken(pub usize);
+
+#[cfg(not(target_os = "windows"))]
+impl UserToken {
+    pub fn new(handle: usize) -> Self {
+        Self(handle)
+    }
+
+    pub fn as_raw(&self) -> usize {
+        self.0
+    }
+}
+
+#[cfg(target_os = "windows")]
+pub use super::terminal_helper::UserToken;
 
 #[derive(Clone)]
 pub struct TerminalService {
@@ -580,6 +591,12 @@ pub struct TerminalSession {
     // Track if we've already sent the closed message
     closed_message_sent: bool,
     is_opened: bool,
+    // Helper mode: PTY is managed by helper process, communication via message protocol
+    #[cfg(target_os = "windows")]
+    is_helper_mode: bool,
+    // Handle to helper process for termination when session closes
+    #[cfg(target_os = "windows")]
+    helper_process_handle: Option<SendableHandle>,
 }
 
 impl TerminalSession {
@@ -604,6 +621,10 @@ impl TerminalSession {
             cols,
             closed_message_sent: false,
             is_opened: false,
+            #[cfg(target_os = "windows")]
+            is_helper_mode: false,
+            #[cfg(target_os = "windows")]
+            helper_process_handle: None,
         }
     }
 
@@ -622,14 +643,58 @@ impl TerminalSession {
             // Send a final newline to ensure the reader can read some data, and then exit.
             // This is required on Windows and Linux.
             // Although `self.pty_pair = None;` is called below, we can still send a final newline here.
-            if let Err(e) = input_tx.send(b"\r\n".to_vec()) {
+            #[cfg(target_os = "windows")]
+            let final_msg = if self.is_helper_mode {
+                encode_helper_message(MSG_TYPE_DATA, b"\r\n")
+            } else {
+                b"\r\n".to_vec()
+            };
+            #[cfg(not(target_os = "windows"))]
+            let final_msg = b"\r\n".to_vec();
+
+            if let Err(e) = input_tx.send(final_msg) {
                 log::warn!("Failed to send final newline to the terminal: {}", e);
             }
             drop(input_tx);
         }
         self.output_rx = None;
 
-        // 1. Windows
+        // CRITICAL: In helper mode, we must terminate the helper process BEFORE joining threads!
+        // The reader thread is blocking on output_pipe.read(), which only returns EOF when
+        // the helper process exits. If we try to join the reader thread first, we deadlock.
+        //
+        // Sequence for helper mode:
+        // 1. Signal exiting and close input channel (done above)
+        // 2. Terminate helper process (causes output pipe EOF)
+        // 3. Join reader thread (now unblocked due to EOF)
+        // 4. Join writer thread
+        #[cfg(target_os = "windows")]
+        if self.is_helper_mode {
+            if let Some(helper_handle) = self.helper_process_handle.take() {
+                let handle = helper_handle.as_raw();
+                log::debug!("Helper mode: terminating helper process before joining threads...");
+
+                // Give helper a very short time to exit gracefully (it should detect pipe close)
+                // But don't wait too long - we need to unblock the reader thread
+                let wait_result = unsafe { WinWaitForSingleObject(handle, 100) };
+
+                if wait_result == WIN_WAIT_OBJECT_0 {
+                    log::debug!("Helper process exited gracefully");
+                } else {
+                    // Force terminate to unblock reader thread
+                    log::debug!("Force terminating helper process to unblock reader thread");
+                    unsafe {
+                        let _ = WinTerminateProcess(handle, 0);
+                    }
+                }
+
+                unsafe {
+                    let _ = WinCloseHandle(handle);
+                }
+            }
+        }
+
+        // 1. Windows (non-helper mode)
         //    `pty_pair` uses pipe. https://github.com/rustdesk-org/wezterm/blob/80174f8009f41565f0fa8c66dab90d4f9211ae16/pty/src/win/conpty.rs#L16
         //     `read()` may stuck at https://github.com/rustdesk-org/wezterm/blob/80174f8009f41565f0fa8c66dab90d4f9211ae16/filedescriptor/src/windows.rs#L345
         //     We can close the pipe to signal the reader thread to exit.
@@ -877,6 +942,15 @@ impl TerminalServiceProxy {
             return Ok(Some(response));
         }
 
+        // Windows with user_token: use helper process to run shell as the logged-in user
+        // This solves the ConPTY + CreateProcessAsUserW incompatibility issue where
+        // vim, Claude Code, and other TUI applications hang when ConPTY is created
+        // by SYSTEM service but shell runs as user via CreateProcessAsUserW.
+        #[cfg(target_os = "windows")]
+        if self.user_token.is_some() {
+            return self.handle_open_with_helper(service, open);
+        }
+
         // Create new terminal session
         log::info!(
             "Creating new terminal {} for service: {}",
@@ -977,152 +1051,59 @@ impl TerminalServiceProxy {
             // Store master file in session later
             (writer, reader, child, Some(master))
         };
-
-        session.pid = child.process_id().unwrap_or(0) as u32;
-
-        // Create channels for input/output
-        let (input_tx, input_rx) = mpsc::sync_channel::<Vec<u8>>(CHANNEL_BUFFER_SIZE);
-        let (output_tx, output_rx) = mpsc::sync_channel::<Vec<u8>>(CHANNEL_BUFFER_SIZE);
-
-        // Spawn writer thread
-        let terminal_id = open.terminal_id;
-        let writer_thread = thread::spawn(move || {
-            let mut writer = writer;
-            // Write initial carriage return:
-            // 1. Windows requires at least one carriage return for `drop()` to work properly.
-            //    Without this, the reader may fail to read the buffer after `input_tx.send(b"\r\n".to_vec()).ok();`.
-            // 2. This also refreshes the terminal interface on the controlling side (workaround for blank content on connect).
-            if let Err(e) = writer.write_all(b"\r") {
-                log::error!("Terminal {} initial write error: {}", terminal_id, e);
-            } else {
-                if let Err(e) = writer.flush() {
-                    log::error!("Terminal {} initial flush error: {}", terminal_id, e);
-                }
-            }
-            while let Ok(data) = input_rx.recv() {
-                if let Err(e) = writer.write_all(&data) {
-                    log::error!("Terminal {} write error: {}", terminal_id, e);
-                    break;
-                }
-                if let Err(e) = writer.flush() {
-                    log::error!("Terminal {} flush error: {}", terminal_id, e);
-                }
-            }
-            log::debug!("Terminal {} writer thread exiting", terminal_id);
-        });
-
-        let exiting = session.exiting.clone();
-        // Spawn reader thread
-        let terminal_id = open.terminal_id;
-        let reader_thread = thread::spawn(move || {
-            let mut reader = reader;
-            let mut buf = vec![0u8; 4096];
-            loop {
-                match reader.read(&mut buf) {
-                    Ok(0) => {
-                        // EOF
-                        // This branch can be reached when the child process exits on macOS.
-                        // But not on Linux and Windows in my tests.
-                        break;
-                    }
-                    Ok(n) => {
-                        if exiting.load(Ordering::SeqCst) {
-                            break;
+            // Windows: handle helper mode vs direct PTY mode
+            #[cfg(target_os = "windows")]
+            {
+                if session.is_helper_mode {
+                    // Helper mode: send resize command via message protocol
+                    if let Some(input_tx) = &session.input_tx {
+                        let msg = encode_resize_message(resize.rows as u16, resize.cols as u16);
+                        if let Err(e) = input_tx.send(msg) {
+                            log::error!("Failed to send resize to helper: {}", e);
                         }
-                        let data = buf[..n].to_vec();
-                        // Try to send, if channel is full, drop the data
-                        match output_tx.try_send(data) {
-                            Ok(_) => {}
-                            Err(mpsc::TrySendError::Full(_)) => {
-                                log::debug!(
-                                    "Terminal {} output channel full, dropping data",
-                                    terminal_id
-                                );
-                            }
-                            Err(mpsc::TrySendError::Disconnected(_)) => {
-                                log::debug!("Terminal {} output channel disconnected", terminal_id);
-                                break;
-                            }
-                        }
+                    } else {
+                        log::warn!(
+                            "Terminal {} is in helper mode but input_tx is None, cannot send resize",
+                            resize.terminal_id
+                        );
                     }
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        // This branch is not reached in my tests, but we still add `exiting` check to ensure we can exit.
-                        if exiting.load(Ordering::SeqCst) {
-                            break;
-                        }
-                        // For non-blocking I/O, sleep briefly
-                        thread::sleep(Duration::from_millis(10));
-                    }
-                    Err(e) => {
-                        log::error!("Terminal {} read error: {}", terminal_id, e);
-                        break;
+                } else {
+                    // Direct PTY mode
+                    Self::resize_pty(&session, resize)?;
+                }
+            }
+
+            // Non-Windows platforms
+            #[cfg(not(target_os = "windows"))]
+            {
+                #[cfg(not(target_os = "android"))]
+                {
+                    Self::resize_pty(&session, resize)?;
+                }
+                #[cfg(target_os = "android")]
+                {
+                    if let Some(master) = &session.android_master {
+                        let ws = libc::winsize { ws_row: resize.rows as u16, ws_col: resize.cols as u16, ws_xpixel: 0, ws_ypixel: 0 };
+                        let _ = unsafe { libc::ioctl(master.as_raw_fd(), libc::TIOCSWINSZ, &ws) };
                     }
                 }
             }
-            log::debug!("Terminal {} reader thread exiting", terminal_id);
-        });
-
-        #[cfg(not(target_os = "android"))]
-        { session.pty_pair = pty_pair_for_session; }
-        #[cfg(target_os = "android")]
-        { session.android_master = pty_pair_for_session; }
-        session.child = Some(child);
-        session.input_tx = Some(input_tx);
-        session.output_rx = Some(output_rx);
-        session.reader_thread = Some(reader_thread);
-        session.writer_thread = Some(writer_thread);
-        session.is_opened = true;
-
-        let mut opened = TerminalOpened::new();
-        opened.terminal_id = open.terminal_id;
-        opened.success = true;
-        opened.message = "Terminal opened".to_string();
-        opened.pid = session.pid;
-        opened.service_id = service.service_id.clone();
-        if service.needs_session_sync {
-            if !service.sessions.is_empty() {
-                opened.persistent_sessions = service.sessions.keys().cloned().collect();
-            }
-            service.needs_session_sync = false;
-        }
-        response.set_opened(opened);
-
-        log::info!(
-            "Terminal {} opened successfully with PID {}",
-            open.terminal_id,
-            session.pid
-        );
-
-        // Store the session
-        service
-            .sessions
-            .insert(open.terminal_id, Arc::new(Mutex::new(session)));
-
-        Ok(Some(response))
-    }
-
-    fn handle_resize(
-        &self,
-        session: Option<Arc<Mutex<TerminalSession>>>,
-        resize: &ResizeTerminal,
-    ) -> Result<Option<TerminalResponse>> {
-        if let Some(session_arc) = session {
-            let mut session = session_arc.lock().unwrap();
-            session.update_activity();
-            session.rows = resize.rows as u16;
-            session.cols = resize.cols as u16;
-
-            #[cfg(not(target_os = "android"))]
-            if let Some(pty_pair) = &session.pty_pair {
-                pty_pair.master.resize(PtySize { rows: resize.rows as u16, cols: resize.cols as u16, pixel_width: 0, pixel_height: 0 })?;
-            }
-            #[cfg(target_os = "android")]
-            if let Some(master) = &session.android_master {
-                let ws = libc::winsize { ws_row: resize.rows as u16, ws_col: resize.cols as u16, ws_xpixel: 0, ws_ypixel: 0 };
-                let _ = unsafe { libc::ioctl(master.as_raw_fd(), libc::TIOCSWINSZ, &ws) };
             }
         }
         Ok(None)
+    }
+
+    /// Resize PTY directly (used for non-helper mode)
+    fn resize_pty(session: &TerminalSession, resize: &ResizeTerminal) -> Result<()> {
+        if let Some(pty_pair) = &session.pty_pair {
+            pty_pair.master.resize(PtySize {
+                rows: resize.rows as u16,
+                cols: resize.cols as u16,
+                pixel_width: 0,
+                pixel_height: 0,
+            })?;
+        }
+        Ok(())
     }
 
     fn handle_data(
@@ -1134,8 +1115,18 @@ impl TerminalServiceProxy {
             let mut session = session_arc.lock().unwrap();
             session.update_activity();
             if let Some(input_tx) = &session.input_tx {
+                // Encode data for helper mode or send raw for direct PTY mode
+                #[cfg(target_os = "windows")]
+                let msg = if session.is_helper_mode {
+                    encode_helper_message(MSG_TYPE_DATA, &data.data)
+                } else {
+                    data.data.to_vec()
+                };
+                #[cfg(not(target_os = "windows"))]
+                let msg = data.data.to_vec();
+
                 // Send data to writer thread
-                if let Err(e) = input_tx.send(data.data.to_vec()) {
+                if let Err(e) = input_tx.send(msg) {
                     log::error!(
                         "Failed to send data to terminal {}: {}",
                         data.terminal_id,

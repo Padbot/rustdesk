@@ -13,15 +13,18 @@ import 'package:flutter_hbb/desktop/widgets/refresh_wrapper.dart';
 import 'package:flutter_hbb/desktop/widgets/tabbar_widget.dart';
 import 'package:flutter_hbb/main.dart';
 import 'package:flutter_hbb/models/peer_model.dart';
+import 'package:flutter_hbb/models/peer_tab_model.dart';
 import 'package:flutter_hbb/models/state_model.dart';
 import 'package:flutter_hbb/utils/multi_window_manager.dart';
 import 'package:flutter_hbb/utils/platform_channel.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:get/get.dart';
+import 'package:get/get_rx/src/rx_workers/utils/debouncer.dart';
 import 'package:provider/provider.dart';
 import 'package:uni_links/uni_links.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:uuid/uuid.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:window_size/window_size.dart' as window_size;
 
@@ -42,6 +45,7 @@ import 'package:flutter_hbb/native/win32.dart'
     if (dart.library.html) 'package:flutter_hbb/web/win32.dart';
 import 'package:flutter_hbb/native/common.dart'
     if (dart.library.html) 'package:flutter_hbb/web/common.dart';
+import 'package:flutter_hbb/utils/http_service.dart' as http;
 
 final globalKey = GlobalKey<NavigatorState>();
 final navigationBarKey = GlobalKey();
@@ -74,6 +78,9 @@ bool _ignoreDevicePixelRatio = true;
 int windowsBuildNumber = 0;
 DesktopType? desktopType;
 
+// Tolerance used for floating-point position comparisons to avoid precision errors.
+const double _kPositionEpsilon = 1e-6;
+
 bool get isMainDesktopWindow =>
     desktopType == DesktopType.main || desktopType == DesktopType.cm;
 
@@ -103,6 +110,10 @@ enum DesktopType {
   terminal,
   cm,
   portForward,
+}
+
+bool isDoubleEqual(double a, double b) {
+  return (a - b).abs() < _kPositionEpsilon;
 }
 
 class IconFont {
@@ -1000,13 +1011,15 @@ makeMobileActionsOverlayEntry(VoidCallback? onHide, {FFI? ffi}) {
   });
 }
 
-void showToast(String text, {Duration timeout = const Duration(seconds: 3)}) {
+void showToast(String text,
+    {Duration timeout = const Duration(seconds: 3),
+    Alignment alignment = const Alignment(0.0, 0.8)}) {
   final overlayState = globalKey.currentState?.overlay;
   if (overlayState == null) return;
   final entry = OverlayEntry(builder: (context) {
     return IgnorePointer(
         child: Align(
-            alignment: const Alignment(0.0, 0.8),
+            alignment: alignment,
             child: Container(
               decoration: BoxDecoration(
                 color: MyTheme.color(context).toastBg,
@@ -1565,7 +1578,7 @@ bool option2bool(String option, String value) {
       option == kOptionForceAlwaysRelay) {
     res = value == "Y";
   } else {
-    assert(false);
+    // "" is true
     res = value != "N";
   }
   return res;
@@ -1583,9 +1596,6 @@ String bool2option(String option, bool b) {
       option == kOptionForceAlwaysRelay) {
     res = b ? 'Y' : defaultOptionNo;
   } else {
-    if (option != kOptionEnableUdpPunch && option != kOptionEnableIpv6Punch) {
-      assert(false);
-    }
     res = b ? 'Y' : 'N';
   }
   return res;
@@ -1621,7 +1631,8 @@ bool mainGetPeerBoolOptionSync(String id, String key) {
 // Use `sessionGetToggleOption()` and `sessionToggleOption()` instead.
 // Because all session options use `Y` and `<Empty>` as values.
 
-Future<bool> matchPeer(String searchText, Peer peer) async {
+Future<bool> matchPeer(
+    String searchText, Peer peer, PeerTabIndex peerTabIndex) async {
   if (searchText.isEmpty) {
     return true;
   }
@@ -1632,11 +1643,14 @@ Future<bool> matchPeer(String searchText, Peer peer) async {
       peer.username.toLowerCase().contains(searchText)) {
     return true;
   }
-  final alias = peer.alias;
-  if (alias.isEmpty) {
-    return false;
+  if (peer.alias.toLowerCase().contains(searchText)) {
+    return true;
   }
-  return alias.toLowerCase().contains(searchText);
+  if (peerTabShowNote(peerTabIndex) &&
+      peer.note.toLowerCase().contains(searchText)) {
+    return true;
+  }
+  return false;
 }
 
 /// Get the image for the current [platform].
@@ -1665,6 +1679,15 @@ class LastWindowPosition {
 
   LastWindowPosition(this.width, this.height, this.offsetWidth,
       this.offsetHeight, this.isMaximized, this.isFullscreen);
+
+  bool equals(LastWindowPosition other) {
+    return ((width == other.width) &&
+        (height == other.height) &&
+        (offsetWidth == other.offsetWidth) &&
+        (offsetHeight == other.offsetHeight) &&
+        (isMaximized == other.isMaximized) &&
+        (isFullscreen == other.isFullscreen));
+  }
 
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
@@ -1705,24 +1728,36 @@ String get windowFramePrefix =>
         ? "incoming_"
         : (bind.isOutgoingOnly() ? "outgoing_" : ""));
 
+typedef WindowKey = ({WindowType type, int? windowId});
+
+LastWindowPosition? _lastWindowPosition = null;
+final Debouncer _saveWindowDebounce = Debouncer(delay: Duration(seconds: 1));
+
 /// Save window position and size on exit
 /// Note that windowId must be provided if it's subwindow
-Future<void> saveWindowPosition(WindowType type, {int? windowId}) async {
+Future<void> saveWindowPosition(WindowType type,
+    {int? windowId, bool? flush}) async {
   if (type != WindowType.Main && windowId == null) {
     debugPrint(
         "Error: windowId cannot be null when saving positions for sub window");
   }
 
-  late Offset position;
-  late Size sz;
+  Offset? position;
+  Size? sz;
   late bool isMaximized;
   bool isFullscreen = stateGlobal.fullscreen.isTrue;
+
   setPreFrame() {
     final pos = bind.getLocalFlutterOption(k: windowFramePrefix + type.name);
     var lpos = LastWindowPosition.loadFromString(pos);
-    position = Offset(
-        lpos?.offsetWidth ?? position.dx, lpos?.offsetHeight ?? position.dy);
-    sz = Size(lpos?.width ?? sz.width, lpos?.height ?? sz.height);
+    if (lpos != null) {
+      if (lpos.offsetWidth != null && lpos.offsetHeight != null) {
+        position = Offset(lpos.offsetWidth!, lpos.offsetHeight!);
+      }
+      if (lpos.width != null && lpos.height != null) {
+        sz = Size(lpos.width!, lpos.height!);
+      }
+    }
   }
 
   switch (type) {
@@ -1762,30 +1797,56 @@ Future<void> saveWindowPosition(WindowType type, {int? windowId}) async {
       }
       break;
   }
-  if (isWindows) {
+  if (isWindows && position != null) {
     const kMinOffset = -10000;
     const kMaxOffset = 10000;
-    if (position.dx < kMinOffset ||
-        position.dy < kMinOffset ||
-        position.dx > kMaxOffset ||
-        position.dy > kMaxOffset) {
+    if (position!.dx < kMinOffset ||
+        position!.dy < kMinOffset ||
+        position!.dx > kMaxOffset ||
+        position!.dy > kMaxOffset) {
       debugPrint("Invalid position: $position, ignore saving position");
       return;
     }
   }
 
-  final pos = LastWindowPosition(
-      sz.width, sz.height, position.dx, position.dy, isMaximized, isFullscreen);
-  debugPrint(
-      "Saving frame: $windowId: ${pos.width}/${pos.height}, offset:${pos.offsetWidth}/${pos.offsetHeight}, isMaximized:${pos.isMaximized}, isFullscreen:${pos.isFullscreen}");
+  final pos = LastWindowPosition(sz?.width, sz?.height, position?.dx,
+      position?.dy, isMaximized, isFullscreen);
 
-  await bind.setLocalFlutterOption(
-      k: windowFramePrefix + type.name, v: pos.toString());
+  final WindowKey key = (type: type, windowId: windowId);
 
-  if ((type == WindowType.RemoteDesktop || type == WindowType.ViewCamera) &&
-      windowId != null) {
-    await _saveSessionWindowPosition(
-        type, windowId, isMaximized, isFullscreen, pos);
+  final bool haveNewWindowPosition =
+      (_lastWindowPosition == null) || !pos.equals(_lastWindowPosition!);
+  final bool isPreviousNewWindowPositionPending = _saveWindowDebounce.isRunning;
+
+  if (haveNewWindowPosition || isPreviousNewWindowPositionPending) {
+    _lastWindowPosition = pos;
+
+    if (flush ?? false) {
+      // If a previous update is pending, replace it.
+      _saveWindowDebounce.cancel();
+      await _saveWindowPositionActual(key);
+    } else if (haveNewWindowPosition) {
+      _saveWindowDebounce.call(() => _saveWindowPositionActual(key));
+    }
+  }
+}
+
+Future<void> _saveWindowPositionActual(WindowKey key) async {
+  LastWindowPosition? pos = _lastWindowPosition;
+
+  if (pos != null) {
+    debugPrint(
+        "Saving frame: ${key.windowId}: ${pos.width}/${pos.height}, offset:${pos.offsetWidth}/${pos.offsetHeight}, isMaximized:${pos.isMaximized}, isFullscreen:${pos.isFullscreen}");
+
+    await bind.setLocalFlutterOption(
+        k: windowFramePrefix + key.type.name, v: pos.toString());
+
+    if ((key.type == WindowType.RemoteDesktop ||
+            key.type == WindowType.ViewCamera) &&
+        key.windowId != null) {
+      await _saveSessionWindowPosition(key.type, key.windowId!,
+          pos.isMaximized ?? false, pos.isFullscreen ?? false, pos);
+    }
   }
 }
 
@@ -1851,6 +1912,8 @@ Future<Size> _adjustRestoreMainWindowSize(double? width, double? height) async {
   return Size(restoreWidth, restoreHeight);
 }
 
+// Consider using Rect.contains() instead,
+// though the implementation is not exactly the same.
 bool isPointInRect(Offset point, Rect rect) {
   return point.dx >= rect.left &&
       point.dx <= rect.right &&
@@ -1869,44 +1932,41 @@ Future<Offset?> _adjustRestoreMainWindowOffset(
     return null;
   }
 
-  double? frameLeft;
-  double? frameTop;
-  double? frameRight;
-  double? frameBottom;
-
   if (isDesktop || isWebDesktop) {
-    for (final screen in await window_size.getScreenList()) {
-      frameLeft = frameLeft == null
-          ? screen.visibleFrame.left
-          : min(screen.visibleFrame.left, frameLeft);
-      frameTop = frameTop == null
-          ? screen.visibleFrame.top
-          : min(screen.visibleFrame.top, frameTop);
-      frameRight = frameRight == null
-          ? screen.visibleFrame.right
-          : max(screen.visibleFrame.right, frameRight);
-      frameBottom = frameBottom == null
-          ? screen.visibleFrame.bottom
-          : max(screen.visibleFrame.bottom, frameBottom);
+    final screens = await window_size.getScreenList();
+    if (screens.isNotEmpty) {
+      final windowRect = Rect.fromLTWH(left, top, width, height);
+      bool isVisible = false;
+      for (final screen in screens) {
+        final intersection = windowRect.intersect(screen.visibleFrame);
+        if (intersection.width >= 10.0 && intersection.height >= 10.0) {
+          isVisible = true;
+          break;
+        }
+      }
+      if (!isVisible) {
+        return null;
+      }
+      return Offset(left, top);
     }
   }
-  if (frameLeft == null) {
-    frameLeft = 0.0;
-    frameTop = 0.0;
-    frameRight = ((isDesktop || isWebDesktop)
-            ? kDesktopMaxDisplaySize
-            : kMobileMaxDisplaySize)
-        .toDouble();
-    frameBottom = ((isDesktop || isWebDesktop)
-            ? kDesktopMaxDisplaySize
-            : kMobileMaxDisplaySize)
-        .toDouble();
-  }
+
+  double frameLeft = 0.0;
+  double frameTop = 0.0;
+  double frameRight = ((isDesktop || isWebDesktop)
+          ? kDesktopMaxDisplaySize
+          : kMobileMaxDisplaySize)
+      .toDouble();
+  double frameBottom = ((isDesktop || isWebDesktop)
+          ? kDesktopMaxDisplaySize
+          : kMobileMaxDisplaySize)
+      .toDouble();
+
   final minWidth = 10.0;
-  if ((left + minWidth) > frameRight! ||
-      (top + minWidth) > frameBottom! ||
+  if ((left + minWidth) > frameRight ||
+      (top + minWidth) > frameBottom ||
       (left + width - minWidth) < frameLeft ||
-      top < frameTop!) {
+      top < frameTop) {
     return null;
   } else {
     return Offset(left, top);
@@ -1948,8 +2008,24 @@ Future<bool> restoreWindowPosition(WindowType type,
 
   var lpos = LastWindowPosition.loadFromString(pos);
   if (lpos == null) {
-    debugPrint("no window position saved, ignoring position restoration");
-    return false;
+    debugPrint("No window position saved, trying to center the window.");
+    switch (type) {
+      case WindowType.Main:
+        // Center the main window only if no position is saved (on first run).
+        if (isWindows || isLinux) {
+          await windowManager.center();
+        }
+        // For MacOS, the window is already centered by default.
+        // See https://github.com/rustdesk/rustdesk/blob/9b9276e7524523d7f667fefcd0694d981443df0e/flutter/macos/Runner/Base.lproj/MainMenu.xib#L333
+        // If `<windowPositionMask>` in `<window>` is not set, the window will be centered.
+        break;
+      default:
+        // No need to change the position of a sub window if no position is saved,
+        // since the default position is already centered.
+        // https://github.com/rustdesk/rustdesk/blob/317639169359936f7f9f85ef445ec9774218772d/flutter/lib/utils/multi_window_manager.dart#L163
+        break;
+    }
+    return true;
   }
   if (type == WindowType.RemoteDesktop || type == WindowType.ViewCamera) {
     if (!isRemotePeerPos && windowId != null) {
@@ -2597,6 +2673,55 @@ class SimpleWrapper<T> {
   SimpleWrapper(this.value);
 }
 
+/// Wakelock manager with reference counting for desktop.
+/// Ensures wakelock is only disabled when all sessions are closed/minimized.
+///
+/// Note: Each isolate has its own WakelockPlus instance with independent assertion.
+/// As long as one isolate has wakelock enabled, the screen stays awake.
+/// This manager handles multiple tabs within the same isolate.
+class WakelockManager {
+  static final Set<UniqueKey> _enabledKeys = {};
+  // Don't use WakelockPlus.enabled, it causes error on Android:
+  // Unhandled Exception: FormatException: Message corrupted
+  //
+  // On Linux, multiple enable() calls create only one inhibit, but each disable()
+  // only releases if _cookie != null. So we need our own _enabled state to avoid
+  // calling disable() when not enabled.
+  // See: https://github.com/fluttercommunity/wakelock_plus/blob/0c74e5bbc6aefac57b6c96bb7ef987705ed559ec/wakelock_plus/lib/src/wakelock_plus_linux_plugin.dart#L48
+  static bool _enabled = false;
+
+  static void enable(UniqueKey key, {bool isServer = false}) {
+    // Check if we should keep awake during outgoing sessions
+    if (!isServer) {
+      final keepAwake =
+          mainGetLocalBoolOptionSync(kOptionKeepAwakeDuringOutgoingSessions);
+      if (!keepAwake) {
+        return; // Don't enable wakelock if user disabled keep awake
+      }
+    }
+    if (isDesktop) {
+      _enabledKeys.add(key);
+    }
+    if (!_enabled) {
+      _enabled = true;
+      WakelockPlus.enable();
+    }
+  }
+
+  static void disable(UniqueKey key) {
+    if (isDesktop) {
+      _enabledKeys.remove(key);
+      if (_enabledKeys.isNotEmpty) {
+        return;
+      }
+    }
+    if (_enabled) {
+      WakelockPlus.disable();
+      _enabled = false;
+    }
+  }
+}
+
 /// call this to reload current window.
 ///
 /// [Note]
@@ -2753,7 +2878,7 @@ class ServerConfig {
     } catch (err) {
       final input = msg.split('').reversed.join('');
       final bytes = base64Decode(base64.normalize(input));
-      json = jsonDecode(utf8.decode(bytes));
+      json = jsonDecode(utf8.decode(bytes, allowMalformed: true));
     }
     idServer = json['host'] ?? '';
     relayServer = json['relay'] ?? '';
@@ -2870,7 +2995,7 @@ Future<void> updateSystemWindowTheme() async {
 ///
 /// Note: not found a general solution for rust based AVFoundation bingding.
 /// [AVFoundation] crate has compile error.
-const kMacOSPermChannel = MethodChannel("org.rustdesk.rustdesk/macos");
+const kMacOSPermChannel = MethodChannel("org.rustdesk.rustdesk/host");
 
 enum PermissionAuthorizeType {
   undetermined,
@@ -2937,10 +3062,21 @@ Future<void> start_service(bool is_start) async {
 }
 
 Future<bool> canBeBlocked() async {
-  var access_mode = await bind.mainGetOption(key: kOptionAccessMode);
+  // First check control permission
+  final controlPermission = await bind.mainGetCommon(
+      key: "is-remote-modify-enabled-by-control-permissions");
+  if (controlPermission == "true") {
+    return false;
+  } else if (controlPermission == "false") {
+    return true;
+  }
+
+  // Check local settings
+  var accessMode = await bind.mainGetOption(key: kOptionAccessMode);
+  var isCustomAccessMode = accessMode != 'full' && accessMode != 'view';
   var option = option2bool(kOptionAllowRemoteConfigModification,
       await bind.mainGetOption(key: kOptionAllowRemoteConfigModification));
-  return access_mode == 'view' || (access_mode.isEmpty && !option);
+  return accessMode == 'view' || (isCustomAccessMode && !option);
 }
 
 // to-do: web not implemented
@@ -3709,6 +3845,16 @@ setResizable(bool resizable) {
 
 isOptionFixed(String key) => bind.mainIsOptionFixed(key: key);
 
+bool isChangePermanentPasswordDisabled() =>
+    bind.mainGetBuildinOption(key: kOptionDisableChangePermanentPassword) ==
+    'Y';
+
+bool isChangeIdDisabled() =>
+    bind.mainGetBuildinOption(key: kOptionDisableChangeId) == 'Y';
+
+bool isUnlockPinDisabled() =>
+    bind.mainGetBuildinOption(key: kOptionDisableUnlockPin) == 'Y';
+
 bool? _isCustomClient;
 bool get isCustomClient {
   _isCustomClient ??= bind.isCustomClient();
@@ -3915,4 +4061,60 @@ String get appName {
     _appName = bind.mainGetAppNameSync();
   }
   return _appName;
+}
+
+String getConnectionText(bool secure, bool direct, String streamType) {
+  String connectionText;
+  if (secure && direct) {
+    connectionText = translate("Direct and encrypted connection");
+  } else if (secure && !direct) {
+    connectionText = translate("Relayed and encrypted connection");
+  } else if (!secure && direct) {
+    connectionText = translate("Direct and unencrypted connection");
+  } else {
+    connectionText = translate("Relayed and unencrypted connection");
+  }
+  if (streamType == 'Relay') {
+    streamType = 'TCP';
+  }
+  if (streamType.isEmpty) {
+    return connectionText;
+  } else {
+    return '$connectionText ($streamType)';
+  }
+}
+
+String decode_http_response(http.Response resp) {
+  try {
+    // https://github.com/rustdesk/rustdesk-server-pro/discussions/758
+    return utf8.decode(resp.bodyBytes, allowMalformed: true);
+  } catch (e) {
+    debugPrint('Failed to decode response as UTF-8: $e');
+    // Fallback to bodyString which handles encoding automatically
+    return resp.body;
+  }
+}
+
+bool peerTabShowNote(PeerTabIndex peerTabIndex) {
+  return peerTabIndex == PeerTabIndex.ab || peerTabIndex == PeerTabIndex.group;
+}
+
+// TODO: We should support individual bits combinations in the future.
+// But for now, just keep it simple, because the old code only supports single button.
+// No users have requested multi-button support yet.
+String mouseButtonsToPeer(int buttons) {
+  switch (buttons) {
+    case kPrimaryMouseButton:
+      return 'left';
+    case kSecondaryMouseButton:
+      return 'right';
+    case kMiddleMouseButton:
+      return 'wheel';
+    case kBackMouseButton:
+      return 'back';
+    case kForwardMouseButton:
+      return 'forward';
+    default:
+      return '';
+  }
 }

@@ -50,8 +50,11 @@ use serde_json::{json, value::Value};
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use std::sync::atomic::Ordering;
 use std::{
+    collections::HashSet,
+    net::Ipv6Addr,
     num::NonZeroI64,
     path::PathBuf,
+    str::FromStr,
     sync::{atomic::AtomicI64, mpsc as std_mpsc},
 };
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -61,8 +64,6 @@ use windows::Win32::Foundation::{CloseHandle, HANDLE};
 
 #[cfg(windows)]
 use crate::virtual_display_manager;
-#[cfg(not(any(target_os = "ios")))]
-use std::collections::HashSet;
 pub type Sender = mpsc::UnboundedSender<(Instant, Arc<Message>)>;
 
 lazy_static::lazy_static! {
@@ -70,8 +71,10 @@ lazy_static::lazy_static! {
     static ref SESSIONS: Arc::<Mutex<HashMap<SessionKey, Session>>> = Default::default();
     static ref ALIVE_CONNS: Arc::<Mutex<Vec<i32>>> = Default::default();
     pub static ref AUTHED_CONNS: Arc::<Mutex<Vec<AuthedConn>>> = Default::default();
+    pub static ref CONTROL_PERMISSIONS_ARRAY: Arc::<Mutex<Vec<(i32, ControlPermissions)>>> = Default::default();
     static ref SWITCH_SIDES_UUID: Arc::<Mutex<HashMap<String, (Instant, uuid::Uuid)>>> = Default::default();
     static ref WAKELOCK_SENDER: Arc::<Mutex<std::sync::mpsc::Sender<(usize, usize)>>> = Arc::new(Mutex::new(start_wakelock_thread()));
+    static ref WAKELOCK_KEEP_AWAKE_OPTION: Arc::<Mutex<Option<bool>>> = Default::default();
 }
 
 #[cfg(any(target_os = "windows", target_os = "linux"))]
@@ -126,9 +129,18 @@ pub struct ConnInner {
     tx_video: Option<Sender>,
 }
 
+struct InputMouse {
+    msg: MouseEvent,
+    conn_id: i32,
+    username: String,
+    argb: u32,
+    simulate: bool,
+    show_cursor: bool,
+}
+
 enum MessageInput {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    Mouse((MouseEvent, i32)),
+    Mouse(InputMouse),
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     Key((KeyEvent, bool)),
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -178,6 +190,7 @@ pub enum AuthConnType {
 #[derive(Clone, Debug)]
 enum TerminalUserToken {
     SelfUser,
+    #[cfg(target_os = "windows")]
     CurrentLogonUser(crate::terminal_service::UserToken),
 }
 
@@ -186,6 +199,7 @@ impl TerminalUserToken {
     fn to_terminal_service_token(&self) -> Option<crate::terminal_service::UserToken> {
         match self {
             TerminalUserToken::SelfUser => None,
+            #[cfg(target_os = "windows")]
             TerminalUserToken::CurrentLogonUser(token) => Some(*token),
         }
     }
@@ -214,6 +228,7 @@ pub struct Connection {
     restart: bool,
     recording: bool,
     block_input: bool,
+    control_permissions: Option<ControlPermissions>,
     last_test_delay: Option<Instant>,
     network_delay: u32,
     lock_after_session_end: bool,
@@ -222,6 +237,9 @@ pub struct Connection {
     ip: String,
     // by peer
     disable_keyboard: bool,
+    // by peer
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    show_my_cursor: bool,
     // by peer
     disable_clipboard: bool,
     // by peer
@@ -238,6 +256,7 @@ pub struct Connection {
     server_audit_conn: String,
     server_audit_file: String,
     lr: LoginRequest,
+    peer_argb: u32,
     session_last_recv_time: Option<Arc<Mutex<Instant>>>,
     chat_unanswered: bool,
     file_transferred: bool,
@@ -270,6 +289,11 @@ pub struct Connection {
     // For post requests that need to be sent sequentially.
     // eg. post_conn_audit
     tx_post_seq: mpsc::UnboundedSender<(String, Value)>,
+    // Tracks read job IDs delegated to CM process.
+    // When a read job is delegated to CM (via FS::ReadFile), the job id is added here.
+    // Used to filter stale responses (FileBlockFromCM, FileReadDone, etc.) for
+    // cancelled or unknown jobs.
+    cm_read_job_ids: HashSet<i32>,
     terminal_service_id: String,
     terminal_persistent: bool,
     // The user token must be set when terminal is enabled.
@@ -328,8 +352,14 @@ impl Connection {
         stream: super::Stream,
         id: i32,
         server: super::ServerPtrWeak,
+        control_permissions: Option<ControlPermissions>,
     ) {
+        // Android is not supported yet, so we always set control_permissions to None.
+        #[cfg(target_os = "android")]
+        let control_permissions = None;
         let _raii_id = raii::ConnectionID::new(id);
+        let _raii_control_permissions_id =
+            raii::ControlPermissionsID::new(id, &control_permissions);
         let hash = Hash {
             salt: Config::get_salt(),
             challenge: Config::get_auto_password(6),
@@ -380,14 +410,15 @@ impl Connection {
             port_forward_address: "".to_owned(),
             tx_to_cm,
             authorized: false,
-            keyboard: Connection::permission("enable-keyboard"),
-            clipboard: Connection::permission("enable-clipboard"),
-            audio: Connection::permission("enable-audio"),
+            keyboard: Self::permission(keys::OPTION_ENABLE_KEYBOARD, &control_permissions),
+            clipboard: Self::permission(keys::OPTION_ENABLE_CLIPBOARD, &control_permissions),
+            audio: Self::permission(keys::OPTION_ENABLE_AUDIO, &control_permissions),
             // to-do: make sure is the option correct here
-            file: Connection::permission(keys::OPTION_ENABLE_FILE_TRANSFER),
-            restart: Connection::permission("enable-remote-restart"),
-            recording: Connection::permission("enable-record-session"),
-            block_input: Connection::permission("enable-block-input"),
+            file: Self::permission(keys::OPTION_ENABLE_FILE_TRANSFER, &control_permissions),
+            restart: Self::permission(keys::OPTION_ENABLE_REMOTE_RESTART, &control_permissions),
+            recording: Self::permission(keys::OPTION_ENABLE_RECORD_SESSION, &control_permissions),
+            block_input: Self::permission(keys::OPTION_ENABLE_BLOCK_INPUT, &control_permissions),
+            control_permissions,
             last_test_delay: None,
             network_delay: 0,
             lock_after_session_end: false,
@@ -401,11 +432,14 @@ impl Connection {
             enable_file_transfer: false,
             disable_clipboard: false,
             disable_keyboard: false,
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            show_my_cursor: false,
             tx_input,
             video_ack_required: false,
             server_audit_conn: "".to_owned(),
             server_audit_file: "".to_owned(),
             lr: Default::default(),
+            peer_argb: 0u32,
             session_last_recv_time: None,
             chat_unanswered: false,
             file_transferred: false,
@@ -439,6 +473,7 @@ impl Connection {
             tx_from_authed,
             printer_data: Vec::new(),
             tx_post_seq,
+            cm_read_job_ids: HashSet::new(),
             terminal_service_id: "".to_owned(),
             terminal_persistent: false,
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -631,7 +666,25 @@ impl Connection {
                         }
                         #[cfg(target_os = "windows")]
                         ipc::Data::ClipboardFile(clip) => {
-                            allow_err!(conn.stream.send(&clip_2_msg(clip)).await);
+                            if !conn.is_remote() {
+                                continue;
+                            }
+                            match clip {
+                                clipboard::ClipboardFile::Files { files } => {
+                                    let files = files.into_iter().map(|(f, s)| {
+                                        (f, s as i64)
+                                    }).collect::<Vec<_>>();
+                                    conn.post_file_audit(
+                                        FileAuditType::RemoteSend,
+                                        "",
+                                        files,
+                                        json!({}),
+                                    );
+                                }
+                                _ => {
+                                    allow_err!(conn.stream.send(&clip_2_msg(clip)).await);
+                                }
+                            }
                         }
                         ipc::Data::PrivacyModeState((_, state, impl_key)) => {
                             let msg_out = match state {
@@ -678,6 +731,36 @@ impl Connection {
                             // Notify the peer that we closed the voice call.
                             let msg = new_voice_call_request(false);
                             conn.send(msg).await;
+                        }
+                        ipc::Data::ReadJobInitResult { id, file_num, include_hidden, conn_id, result } => {
+                            if conn_id == conn.inner.id() {
+                                conn.handle_read_job_init_result(id, file_num, include_hidden, result).await;
+                            }
+                        }
+                        ipc::Data::FileBlockFromCM { id, file_num, data, compressed, conn_id } => {
+                            if conn_id == conn.inner.id() {
+                                conn.handle_file_block_from_cm(id, file_num, data, compressed).await;
+                            }
+                        }
+                        ipc::Data::FileReadDone { id, file_num, conn_id } => {
+                            if conn_id == conn.inner.id() {
+                                conn.handle_file_read_done(id, file_num).await;
+                            }
+                        }
+                        ipc::Data::FileReadError { id, file_num, err, conn_id } => {
+                            if conn_id == conn.inner.id() {
+                                conn.handle_file_read_error(id, file_num, err).await;
+                            }
+                        }
+                        ipc::Data::FileDigestFromCM { id, file_num, last_modified, file_size, is_resume, conn_id } => {
+                            if conn_id == conn.inner.id() {
+                                conn.handle_file_digest_from_cm(id, file_num, last_modified, file_size, is_resume).await;
+                            }
+                        }
+                        ipc::Data::AllFilesResult { id, conn_id, path, result } => {
+                            if conn_id == conn.inner.id() {
+                                conn.handle_all_files_result(id, path, result).await;
+                            }
                         }
                         _ => {}
                     }
@@ -738,7 +821,9 @@ impl Connection {
                 }
                 Some((instant, value)) = rx_video.recv() => {
                     if !conn.video_ack_required {
-                        video_service::notify_video_frame_fetched(id, Some(instant.into()));
+                        if let Some(message::Union::VideoFrame(vf)) = &value.union {
+                            video_service::notify_video_frame_fetched(vf.display as usize, id, Some(instant.into()));
+                        }
                     }
                     if let Err(err) = conn.stream.send(&value as &Message).await {
                         conn.on_close(&err.to_string(), false).await;
@@ -810,7 +895,7 @@ impl Connection {
                     match data {
                         #[cfg(all(target_os = "windows", feature = "flutter"))]
                         ipc::Data::PrinterData(data) => {
-                            if config::Config::get_bool_option(config::keys::OPTION_ENABLE_REMOTE_PRINTER) {
+                            if Self::permission(keys::OPTION_ENABLE_REMOTE_PRINTER, &conn.control_permissions) {
                                 conn.send_printer_request(data).await;
                             } else {
                                 conn.send_remote_printing_disallowed().await;
@@ -822,6 +907,7 @@ impl Connection {
                 _ = second_timer.tick() => {
                     #[cfg(windows)]
                     conn.portable_check();
+                    raii::AuthedConnID::check_wake_lock_on_setting_changed();
                     if let Some((instant, minute)) = conn.auto_disconnect_timer.as_ref() {
                         if instant.elapsed().as_secs() > minute * 60 {
                             conn.send_close_reason_no_retry("Connection failed due to inactivity").await;
@@ -886,7 +972,7 @@ impl Connection {
             crate::plugin::EVENT_ON_CONN_CLOSE_SERVER.to_owned(),
             conn.lr.my_id.clone(),
         );
-        video_service::notify_video_frame_fetched(id, None);
+        video_service::notify_video_frame_fetched_by_conn_id(id, None);
         if conn.authorized {
             password::update_temporary_password();
         }
@@ -921,8 +1007,15 @@ impl Connection {
         loop {
             match receiver.recv_timeout(std::time::Duration::from_millis(500)) {
                 Ok(v) => match v {
-                    MessageInput::Mouse((msg, id)) => {
-                        handle_mouse(&msg, id);
+                    MessageInput::Mouse(mouse_input) => {
+                        handle_mouse(
+                            &mouse_input.msg,
+                            mouse_input.conn_id,
+                            mouse_input.username,
+                            mouse_input.argb,
+                            mouse_input.simulate,
+                            mouse_input.show_cursor,
+                        );
                     }
                     MessageInput::Key((mut msg, press)) => {
                         // Set the press state to false, use `down` only in `handle_key()`.
@@ -1318,7 +1411,7 @@ impl Connection {
 
         #[cfg(not(target_os = "android"))]
         {
-            pi.hostname = hbb_common::whoami::hostname();
+            pi.hostname = crate::whoami_hostname();
             pi.platform = hbb_common::whoami::platform().to_string();
         }
         #[cfg(target_os = "android")]
@@ -1327,7 +1420,7 @@ impl Connection {
             pi.platform = "Android".into();
         }
         #[cfg(all(target_os = "macos", not(feature = "unix-file-copy-paste")))]
-        let platform_additions = serde_json::Map::new();
+        let mut platform_additions = serde_json::Map::new();
         #[cfg(any(
             target_os = "windows",
             target_os = "linux",
@@ -1355,6 +1448,13 @@ impl Connection {
             if crate::platform::is_installed() {
                 platform_additions.extend(virtual_display_manager::get_platform_additions());
             }
+            platform_additions.insert(
+                "supported_privacy_mode_impl".into(),
+                json!(privacy_mode::get_supported_privacy_mode_impl()),
+            );
+        }
+        #[cfg(target_os = "macos")]
+        {
             platform_additions.insert(
                 "supported_privacy_mode_impl".into(),
                 json!(privacy_mode::get_supported_privacy_mode_impl()),
@@ -1767,8 +1867,25 @@ impl Connection {
 
     #[inline]
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    fn input_mouse(&self, msg: MouseEvent, conn_id: i32) {
-        self.tx_input.send(MessageInput::Mouse((msg, conn_id))).ok();
+    fn input_mouse(
+        &self,
+        msg: MouseEvent,
+        conn_id: i32,
+        username: String,
+        argb: u32,
+        simulate: bool,
+        show_cursor: bool,
+    ) {
+        self.tx_input
+            .send(MessageInput::Mouse(InputMouse {
+                msg,
+                conn_id,
+                username,
+                argb,
+                simulate,
+                show_cursor,
+            }))
+            .ok();
     }
 
     #[inline]
@@ -1843,7 +1960,8 @@ impl Connection {
         false
     }
 
-    pub fn permission(enable_prefix_option: &str) -> bool {
+    #[inline]
+    pub fn is_permission_enabled_locally(enable_prefix_option: &str) -> bool {
         #[cfg(feature = "flutter")]
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         {
@@ -1858,6 +1976,37 @@ impl Connection {
             enable_prefix_option,
             &Config::get_option(enable_prefix_option),
         )
+    }
+
+    fn permission(
+        enable_prefix_option: &str,
+        control_permissions: &Option<ControlPermissions>,
+    ) -> bool {
+        use hbb_common::rendezvous_proto::control_permissions::Permission;
+        if let Some(control_permissions) = control_permissions {
+            let permission = match enable_prefix_option {
+                keys::OPTION_ENABLE_KEYBOARD => Some(Permission::keyboard),
+                keys::OPTION_ENABLE_REMOTE_PRINTER => Some(Permission::remote_printer),
+                keys::OPTION_ENABLE_CLIPBOARD => Some(Permission::clipboard),
+                keys::OPTION_ENABLE_FILE_TRANSFER => Some(Permission::file),
+                keys::OPTION_ENABLE_AUDIO => Some(Permission::audio),
+                keys::OPTION_ENABLE_CAMERA => Some(Permission::camera),
+                keys::OPTION_ENABLE_TERMINAL => Some(Permission::terminal),
+                keys::OPTION_ENABLE_TUNNEL => Some(Permission::tunnel),
+                keys::OPTION_ENABLE_REMOTE_RESTART => Some(Permission::restart),
+                keys::OPTION_ENABLE_RECORD_SESSION => Some(Permission::recording),
+                keys::OPTION_ENABLE_BLOCK_INPUT => Some(Permission::block_input),
+                _ => None,
+            };
+            if let Some(permission) = permission {
+                if let Some(enabled) =
+                    crate::get_control_permission(control_permissions.permissions, permission)
+                {
+                    return enabled;
+                }
+            }
+        }
+        Self::is_permission_enabled_locally(enable_prefix_option)
     }
 
     fn update_codec_on_login(&self) {
@@ -1883,6 +2032,7 @@ impl Connection {
 
     async fn handle_login_request_without_validation(&mut self, lr: &LoginRequest) {
         self.lr = lr.clone();
+        self.peer_argb = crate::str2color(&format!("{}{}", &lr.my_id, &lr.my_platform), 0xff);
         if let Some(o) = lr.option.as_ref() {
             self.options_in_login = Some(o.clone());
         }
@@ -1954,7 +2104,10 @@ impl Connection {
             }
             match lr.union {
                 Some(login_request::Union::FileTransfer(ft)) => {
-                    if !Connection::permission(keys::OPTION_ENABLE_FILE_TRANSFER) {
+                    if !Self::permission(
+                        keys::OPTION_ENABLE_FILE_TRANSFER,
+                        &self.control_permissions,
+                    ) {
                         self.send_login_error("No permission of file transfer")
                             .await;
                         sleep(1.).await;
@@ -1963,7 +2116,7 @@ impl Connection {
                     self.file_transfer = Some((ft.dir, ft.show_hidden));
                 }
                 Some(login_request::Union::ViewCamera(_vc)) => {
-                    if !Connection::permission(keys::OPTION_ENABLE_CAMERA) {
+                    if !Self::permission(keys::OPTION_ENABLE_CAMERA, &self.control_permissions) {
                         self.send_login_error("No permission of viewing camera")
                             .await;
                         sleep(1.).await;
@@ -1972,7 +2125,7 @@ impl Connection {
                     self.view_camera = true;
                 }
                 Some(login_request::Union::Terminal(terminal)) => {
-                    if !Connection::permission(keys::OPTION_ENABLE_TERMINAL) {
+                    if !Self::permission(keys::OPTION_ENABLE_TERMINAL, &self.control_permissions) {
                         self.send_login_error("No permission of terminal").await;
                         sleep(1.).await;
                         return false;
@@ -2020,7 +2173,7 @@ impl Connection {
                     }
                 }
                 Some(login_request::Union::PortForward(mut pf)) => {
-                    if !Connection::permission("enable-tunnel") {
+                    if !Self::permission(keys::OPTION_ENABLE_TUNNEL, &self.control_permissions) {
                         self.send_login_error("No permission of IP tunneling").await;
                         sleep(1.).await;
                         return false;
@@ -2262,7 +2415,25 @@ impl Connection {
                         }
                         #[cfg(target_os = "macos")]
                         self.retina.on_mouse_event(&mut me, self.display_idx);
-                        self.input_mouse(me, self.inner.id());
+                        self.input_mouse(
+                            me,
+                            self.inner.id(),
+                            self.lr.my_name.clone(),
+                            self.peer_argb,
+                            true,
+                            self.show_my_cursor,
+                        );
+                    } else if self.show_my_cursor {
+                        #[cfg(target_os = "macos")]
+                        self.retina.on_mouse_event(&mut me, self.display_idx);
+                        self.input_mouse(
+                            me,
+                            self.inner.id(),
+                            self.lr.my_name.clone(),
+                            self.peer_argb,
+                            false,
+                            true,
+                        );
                     }
                     self.update_auto_disconnect_timer();
                 }
@@ -2461,14 +2632,25 @@ impl Connection {
                 }
                 #[cfg(any(target_os = "windows", feature = "unix-file-copy-paste"))]
                 Some(message::Union::Cliprdr(clip)) => {
-                    if let Some(clip) = msg_2_clip(clip) {
+                    if let Some(cliprdr::Union::Files(files)) = &clip.union {
+                        self.post_file_audit(
+                            FileAuditType::RemoteReceive,
+                            "",
+                            files
+                                .files
+                                .iter()
+                                .map(|f| (f.name.clone(), f.size as i64))
+                                .collect::<Vec<(String, i64)>>(),
+                            json!({}),
+                        );
+                    } else if let Some(clip) = msg_2_clip(clip) {
                         #[cfg(target_os = "windows")]
                         {
                             self.send_to_cm(ipc::Data::ClipboardFile(clip));
                         }
                         #[cfg(feature = "unix-file-copy-paste")]
                         if crate::is_support_file_copy_paste(&self.lr.version) {
-                            let mut out_msg = None;
+                            let mut out_msgs = vec![];
 
                             #[cfg(target_os = "macos")]
                             if clipboard::platform::unix::macos::should_handle_msg(&clip) {
@@ -2483,7 +2665,7 @@ impl Connection {
                                         });
                                 }
                             } else {
-                                out_msg = unix_file_clip::serve_clip_messages(
+                                out_msgs = unix_file_clip::serve_clip_messages(
                                     ClipboardSide::Host,
                                     clip,
                                     self.inner.id(),
@@ -2492,14 +2674,31 @@ impl Connection {
 
                             #[cfg(not(target_os = "macos"))]
                             {
-                                out_msg = unix_file_clip::serve_clip_messages(
+                                out_msgs = unix_file_clip::serve_clip_messages(
                                     ClipboardSide::Host,
                                     clip,
                                     self.inner.id(),
                                 );
                             }
 
-                            if let Some(msg) = out_msg {
+                            for msg in out_msgs.into_iter() {
+                                if let Some(message::Union::Cliprdr(cliprdr)) = msg.union.as_ref() {
+                                    if let Some(cliprdr::Union::Files(files)) =
+                                        cliprdr.union.as_ref()
+                                    {
+                                        self.post_file_audit(
+                                            FileAuditType::RemoteSend,
+                                            "",
+                                            files
+                                                .files
+                                                .iter()
+                                                .map(|f| (f.name.clone(), f.size as i64))
+                                                .collect::<Vec<(String, i64)>>(),
+                                            json!({}),
+                                        );
+                                        continue;
+                                    }
+                                }
                                 self.send(msg).await;
                             }
                         }
@@ -2555,28 +2754,74 @@ impl Connection {
                                 self.read_dir(&rd.path, rd.include_hidden);
                             }
                             Some(file_action::Union::AllFiles(f)) => {
-                                match fs::get_recursive_files(&f.path, f.include_hidden) {
-                                    Err(err) => {
-                                        self.send(fs::new_error(f.id, err, -1)).await;
-                                    }
-                                    Ok(files) => {
-                                        self.send(fs::new_dir(f.id, f.path, files)).await;
+                                if crate::common::need_fs_cm_send_files() {
+                                    self.send_fs(ipc::FS::ReadAllFiles {
+                                        path: f.path,
+                                        id: f.id,
+                                        include_hidden: f.include_hidden,
+                                        conn_id: self.inner.id(),
+                                    });
+                                } else {
+                                    match fs::get_recursive_files(&f.path, f.include_hidden) {
+                                        Err(err) => {
+                                            log::error!(
+                                                "Failed to get recursive files for {}: {}",
+                                                f.path,
+                                                err
+                                            );
+                                            self.send(fs::new_error(f.id, err, -1)).await;
+                                        }
+                                        Ok(files) => {
+                                            if let Err(msg) =
+                                                crate::ui_cm_interface::check_file_count_limit(
+                                                    files.len(),
+                                                )
+                                            {
+                                                self.send(fs::new_error(f.id, msg, -1)).await;
+                                            } else {
+                                                self.send(fs::new_dir(f.id, f.path, files)).await;
+                                            }
+                                        }
                                     }
                                 }
                             }
                             Some(file_action::Union::Send(s)) => {
                                 // server to client
                                 let id = s.id;
-                                let od = can_enable_overwrite_detection(get_version_number(
-                                    &self.lr.version,
-                                ));
                                 let path = s.path.clone();
-                                let r#type = JobType::from_proto(s.file_type);
-                                let data_source;
-                                match r#type {
+                                let job_type = JobType::from_proto(s.file_type);
+                                match job_type {
                                     JobType::Generic => {
-                                        data_source =
-                                            fs::DataSource::FilePath(PathBuf::from(&path));
+                                        let od = can_enable_overwrite_detection(
+                                            get_version_number(&self.lr.version),
+                                        );
+                                        if crate::common::need_fs_cm_send_files() {
+                                            // Delegate file reading to CM on Windows
+                                            self.cm_read_job_ids.insert(id);
+                                            self.send_fs(ipc::FS::ReadFile {
+                                                path,
+                                                id,
+                                                file_num: s.file_num,
+                                                include_hidden: s.include_hidden,
+                                                conn_id: self.inner.id(),
+                                                overwrite_detection: od,
+                                            });
+                                        } else {
+                                            // Handle file reading in Connection on non-Windows
+                                            let data_source =
+                                                fs::DataSource::FilePath(PathBuf::from(&path));
+                                            self.create_and_start_read_job(
+                                                id,
+                                                job_type,
+                                                data_source,
+                                                s.file_num,
+                                                s.include_hidden,
+                                                od,
+                                                path,
+                                                true, // check file count limit
+                                            )
+                                            .await;
+                                        }
                                     }
                                     JobType::Printer => {
                                         if let Some((_, _, data)) = self
@@ -2585,48 +2830,25 @@ impl Connection {
                                             .position(|(_, p, _)| *p == path)
                                             .map(|index| self.printer_data.remove(index))
                                         {
-                                            data_source = fs::DataSource::MemoryCursor(
+                                            let data_source = fs::DataSource::MemoryCursor(
                                                 std::io::Cursor::new(data),
                                             );
+                                            // Printer jobs don't need file count limit check
+                                            self.create_and_start_read_job(
+                                                id,
+                                                job_type,
+                                                data_source,
+                                                s.file_num,
+                                                s.include_hidden,
+                                                true, // always enable overwrite detection for printer
+                                                path,
+                                                false, // no file count limit for printer
+                                            )
+                                            .await;
                                         } else {
                                             // Ignore this message if the printer data is not found
                                             return true;
                                         }
-                                    }
-                                };
-                                match fs::TransferJob::new_read(
-                                    id,
-                                    r#type,
-                                    "".to_string(),
-                                    data_source,
-                                    s.file_num,
-                                    s.include_hidden,
-                                    false,
-                                    od,
-                                ) {
-                                    Err(err) => {
-                                        self.send(fs::new_error(id, err, 0)).await;
-                                    }
-                                    Ok(mut job) => {
-                                        self.send(fs::new_dir(id, path, job.files().to_vec()))
-                                            .await;
-                                        let files = job.files().to_owned();
-                                        job.is_remote = true;
-                                        job.conn_id = self.inner.id();
-                                        let job_type = job.r#type;
-                                        self.read_jobs.push(job);
-                                        self.file_timer =
-                                            crate::rustdesk_interval(time::interval(MILLI1));
-                                        self.post_file_audit(
-                                            FileAuditType::RemoteSend,
-                                            if job_type == fs::JobType::Printer {
-                                                "Remote print"
-                                            } else {
-                                                &s.path
-                                            },
-                                            Self::get_files_for_audit(job_type, files),
-                                            json!({}),
-                                        );
                                     }
                                 }
                                 self.file_transferred = true;
@@ -2694,6 +2916,11 @@ impl Connection {
                             }
                             Some(file_action::Union::Cancel(c)) => {
                                 self.send_fs(ipc::FS::CancelWrite { id: c.id });
+                                let _ = self.cm_read_job_ids.remove(&c.id);
+                                self.send_fs(ipc::FS::CancelRead {
+                                    id: c.id,
+                                    conn_id: self.inner.id(),
+                                });
                                 if let Some(job) = fs::remove_job(c.id, &mut self.read_jobs) {
                                     self.send_to_cm(ipc::Data::FileTransferLog((
                                         "transfer".to_string(),
@@ -2703,7 +2930,20 @@ impl Connection {
                             }
                             Some(file_action::Union::SendConfirm(r)) => {
                                 if let Some(job) = fs::get_job(r.id, &mut self.read_jobs) {
-                                    job.confirm(&r);
+                                    job.confirm(&r).await;
+                                } else if self.cm_read_job_ids.contains(&r.id) {
+                                    // Forward to CM for CM-read jobs
+                                    self.send_fs(ipc::FS::SendConfirmForRead {
+                                        id: r.id,
+                                        file_num: r.file_num,
+                                        skip: r.skip(),
+                                        offset_blk: r.offset_blk(),
+                                        conn_id: self.inner.id(),
+                                    });
+                                } else {
+                                    if let Ok(sc) = r.write_to_bytes() {
+                                        self.send_fs(ipc::FS::SendConfirm(sc));
+                                    }
                                 }
                             }
                             Some(file_action::Union::Rename(r)) => {
@@ -2747,6 +2987,7 @@ impl Connection {
                         file_size: d.file_size,
                         last_modified: d.last_modified,
                         is_upload: true,
+                        is_resume: d.is_resume,
                     }),
                     Some(file_response::Union::Error(e)) => {
                         self.send_fs(ipc::FS::WriteError {
@@ -2795,7 +3036,7 @@ impl Connection {
                         self.update_auto_disconnect_timer();
                     }
                     Some(misc::Union::VideoReceived(_)) => {
-                        video_service::notify_video_frame_fetched(
+                        video_service::notify_video_frame_fetched_by_conn_id(
                             self.inner.id,
                             Some(Instant::now().into()),
                         );
@@ -3041,12 +3282,15 @@ impl Connection {
         if !token.is_null() {
             match crate::platform::ensure_primary_token(token) {
                 Ok(t) => {
-                    self.terminal_user_token = Some(TerminalUserToken::CurrentLogonUser(t as _));
+                    self.terminal_user_token = Some(TerminalUserToken::CurrentLogonUser(
+                        crate::terminal_service::UserToken::new(t as usize),
+                    ));
                 }
                 Err(e) => {
                     log::error!("Failed to ensure primary token: {}", e);
-                    self.terminal_user_token =
-                        Some(TerminalUserToken::CurrentLogonUser(token as _));
+                    self.terminal_user_token = Some(TerminalUserToken::CurrentLogonUser(
+                        crate::terminal_service::UserToken::new(token as usize),
+                    ));
                 }
             }
             None
@@ -3059,35 +3303,134 @@ impl Connection {
         }
     }
 
-    fn update_failure(&self, (mut failure, time): ((i32, i32, i32), i32), remove: bool, i: usize) {
+    // Try to parse connection IP as IPv6 address, returning /64, /56, and /48 prefixes.
+    // Parsing an IPv4 address just returns None.
+    // note: we specifically don't use hbb_common::is_ipv6_str to avoid divergence issues
+    // between its regex and the system std::net::Ipv6Addr implementation.
+    fn get_ipv6_prefixes(&self) -> Option<(String, String, String)> {
+        fn mask_u128(addr: u128, prefix: u8) -> u128 {
+            let mask = if prefix == 0 || prefix > 128 {
+                0
+            } else {
+                (!0u128) << (128 - prefix)
+            };
+            addr & mask
+        }
+        // eliminate zone-ids like "fe80::1%eth0"
+        let ip_only = self.ip.split('%').next().unwrap_or(&self.ip).trim();
+        let ip = Ipv6Addr::from_str(ip_only).ok()?;
+
+        let as_u128 = u128::from_be_bytes(ip.octets());
+
+        let p64 = Ipv6Addr::from(mask_u128(as_u128, 64).to_be_bytes()).to_string() + "/64";
+        let p56 = Ipv6Addr::from(mask_u128(as_u128, 56).to_be_bytes()).to_string() + "/56";
+        let p48 = Ipv6Addr::from(mask_u128(as_u128, 48).to_be_bytes()).to_string() + "/48";
+
+        Some((p64, p56, p48))
+    }
+
+    fn update_failure(&self, (failure, time): ((i32, i32, i32), i32), remove: bool, i: usize) {
+        fn bump(mut cur: (i32, i32, i32), time: i32) -> (i32, i32, i32) {
+            if cur.0 == time {
+                cur.1 += 1;
+                cur.2 += 1;
+            } else {
+                cur.0 = time;
+                cur.1 = 1;
+                cur.2 += 1;
+            }
+            cur
+        }
+        let map_mutex = &LOGIN_FAILURES[i];
         if remove {
             if failure.0 != 0 {
-                LOGIN_FAILURES[i].lock().unwrap().remove(&self.ip);
+                if let Some((p64, p56, p48)) = self.get_ipv6_prefixes() {
+                    let mut m = map_mutex.lock().unwrap();
+                    m.remove(&p64);
+                    m.remove(&p56);
+                    m.remove(&p48);
+                    m.remove(&self.ip);
+                } else {
+                    map_mutex.lock().unwrap().remove(&self.ip);
+                }
             }
             return;
         }
-        if failure.0 == time {
-            failure.1 += 1;
-            failure.2 += 1;
+        // Bump the prefixes, fetching existing values
+        if let Some((p64, p56, p48)) = self.get_ipv6_prefixes() {
+            let mut m = map_mutex.lock().unwrap();
+            for key in [p64, p56, p48] {
+                let cur = m.get(&key).copied().unwrap_or((0, 0, 0));
+                m.insert(key, bump(cur, time));
+            }
+            // Update full IP: bump from the *original* passed-in failure
+            m.insert(self.ip.clone(), bump(failure, time));
         } else {
-            failure.0 = time;
-            failure.1 = 1;
-            failure.2 += 1;
+            // Update full IP: bump from the *original* passed-in failure
+            let mut m = map_mutex.lock().unwrap();
+            m.insert(self.ip.clone(), bump(failure, time));
         }
-        LOGIN_FAILURES[i]
+    }
+
+    async fn check_failure_ipv6_prefix(
+        &mut self,
+        i: usize,
+        time: i32,
+        prefix: &str,
+        prefix_num: i8,
+        thresh: i32,
+    ) -> Option<(((i32, i32, i32), i32), bool)> {
+        let failure_prefix = LOGIN_FAILURES[i]
             .lock()
             .unwrap()
-            .insert(self.ip.clone(), failure);
+            .get(prefix)
+            .copied()
+            .unwrap_or((0, 0, 0));
+
+        if failure_prefix.2 > thresh {
+            self.send_login_error(format!(
+                "Too many wrong attempts for IPv6 prefix /{}",
+                prefix_num
+            ))
+            .await;
+            Self::post_alarm_audit(
+                AlarmAuditType::ExceedIPv6PrefixAttempts,
+                json!({
+                            "ip": self.ip,
+                            "id": self.lr.my_id.clone(),
+                            "name": self.lr.my_name.clone(),
+                }),
+            );
+            Some(((failure_prefix, time), false))
+        } else {
+            None
+        }
     }
 
     async fn check_failure(&mut self, i: usize) -> (((i32, i32, i32), i32), bool) {
+        let time = (get_time() / 60_000) as i32;
+
+        // IPv6 addresses are cheap to make so we check prefix/netblock as well
+        if let Some((p64, p56, p48)) = self.get_ipv6_prefixes() {
+            if let Some(res) = self.check_failure_ipv6_prefix(i, time, &p64, 64, 60).await {
+                return res;
+            }
+            if let Some(res) = self.check_failure_ipv6_prefix(i, time, &p56, 56, 80).await {
+                return res;
+            }
+            if let Some(res) = self.check_failure_ipv6_prefix(i, time, &p48, 48, 100).await {
+                return res;
+            }
+        }
+
+        // checks IPv6 and IPv4 direct addresses
         let failure = LOGIN_FAILURES[i]
             .lock()
             .unwrap()
             .get(&self.ip)
-            .map(|x| x.clone())
+            .copied()
             .unwrap_or((0, 0, 0));
-        let time = (get_time() / 60_000) as i32;
+
         let res = if failure.2 > 30 {
             self.send_login_error("Too many wrong attempts").await;
             Self::post_alarm_audit(
@@ -3312,6 +3655,7 @@ impl Connection {
                     {
                         return;
                     }
+                    #[allow(unused_mut)]
                     let mut record_changed = true;
                     #[cfg(windows)]
                     if virtual_display_manager::amyuni_idd::is_my_display(&name) {
@@ -3587,6 +3931,50 @@ impl Connection {
                 self.update_terminal_persistence(q == BoolOption::Yes).await;
             }
         }
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        if let Ok(q) = o.show_my_cursor.enum_value() {
+            if q != BoolOption::NotSet {
+                use crate::whiteboard;
+                self.show_my_cursor = q == BoolOption::Yes;
+                #[cfg(target_os = "windows")]
+                let is_lower_win10 = !crate::platform::windows::is_win_10_or_greater();
+                #[cfg(not(target_os = "windows"))]
+                let is_lower_win10 = false;
+                #[cfg(target_os = "linux")]
+                let is_linux_supported = crate::whiteboard::is_supported();
+                #[cfg(not(target_os = "linux"))]
+                let is_linux_supported = false;
+                let not_support_msg = if is_lower_win10 {
+                    "Windows 10 or greater is required."
+                } else if cfg!(target_os = "linux") && !is_linux_supported {
+                    "This feature is not supported on native Wayland, please install XWayland or switch to X11."
+                } else {
+                    ""
+                };
+                if q == BoolOption::Yes {
+                    if not_support_msg.is_empty() {
+                        whiteboard::register_whiteboard(whiteboard::get_key_cursor(self.inner.id));
+                    } else {
+                        let mut msg_out = Message::new();
+                        let res = MessageBox {
+                            msgtype: "nook-nocancel-hasclose".to_owned(),
+                            title: "Show my cursor".to_owned(),
+                            text: not_support_msg.to_owned(),
+                            link: "".to_owned(),
+                            ..Default::default()
+                        };
+                        msg_out.set_message_box(res);
+                        self.send(msg_out).await;
+                    }
+                } else {
+                    if not_support_msg.is_empty() {
+                        whiteboard::unregister_whiteboard(whiteboard::get_key_cursor(
+                            self.inner.id,
+                        ));
+                    }
+                }
+            }
+        }
     }
 
     async fn turn_on_privacy(&mut self, impl_key: String) {
@@ -3751,6 +4139,219 @@ impl Connection {
         raii::AuthedConnID::check_remove_session(self.inner.id(), self.session_key());
     }
 
+    async fn handle_read_job_init_result(
+        &mut self,
+        id: i32,
+        _file_num: i32,
+        _include_hidden: bool,
+        result: Result<Vec<u8>, String>,
+    ) {
+        // Check if this response is still expected (not stale/cancelled)
+        if !self.cm_read_job_ids.contains(&id) {
+            log::warn!(
+                "Received ReadJobInitResult for unknown or stale job id={}, ignoring",
+                id
+            );
+            return;
+        }
+
+        match result {
+            Err(error) => {
+                self.cm_read_job_ids.remove(&id);
+                self.send(fs::new_error(id, error, 0)).await;
+            }
+            Ok(dir_bytes) => {
+                // Deserialize FileDirectory from protobuf bytes
+                let dir = match FileDirectory::parse_from_bytes(&dir_bytes) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        log::error!("Failed to parse FileDirectory: {}", e);
+                        self.cm_read_job_ids.remove(&id);
+                        self.send(fs::new_error(id, "internal error".to_string(), 0))
+                            .await;
+                        return;
+                    }
+                };
+
+                let path_str = dir.path.clone();
+                let file_entries: Vec<FileEntry> = dir.entries.into();
+
+                // Send file directory to client
+                self.send(fs::new_dir(id, path_str.clone(), file_entries.clone()))
+                    .await;
+
+                // Post audit for file transfer
+                self.post_file_audit(
+                    FileAuditType::RemoteSend,
+                    &path_str,
+                    Self::get_files_for_audit(fs::JobType::Generic, file_entries),
+                    json!({}),
+                );
+
+                // CM will handle the actual file reading and send blocks via IPC
+                self.file_transferred = true;
+            }
+        }
+    }
+
+    async fn handle_file_block_from_cm(
+        &mut self,
+        id: i32,
+        file_num: i32,
+        data: bytes::Bytes,
+        compressed: bool,
+    ) {
+        // Check if the job is still valid (not cancelled)
+        if !self.cm_read_job_ids.contains(&id) {
+            log::debug!(
+                "Dropping file block for cancelled/unknown job id={}, file_num={}",
+                id,
+                file_num
+            );
+            return;
+        }
+
+        // Forward file block to client
+        let mut block = FileTransferBlock::new();
+        block.id = id;
+        block.file_num = file_num;
+        block.data = data.to_vec().into();
+        block.compressed = compressed;
+
+        let mut msg = Message::new();
+        let mut fr = FileResponse::new();
+        fr.set_block(block);
+        msg.set_file_response(fr);
+        self.send(msg).await;
+    }
+
+    async fn handle_file_read_done(&mut self, id: i32, file_num: i32) {
+        // Drop stale completions for cancelled/unknown jobs
+        if !self.cm_read_job_ids.remove(&id) {
+            log::debug!(
+                "Dropping FileReadDone for cancelled/unknown job id={}, file_num={}",
+                id,
+                file_num
+            );
+            return;
+        }
+
+        // Forward done message to client
+        let mut done = FileTransferDone::new();
+        done.id = id;
+        done.file_num = file_num;
+
+        let mut msg = Message::new();
+        let mut fr = FileResponse::new();
+        fr.set_done(done);
+        msg.set_file_response(fr);
+        self.send(msg).await;
+    }
+
+    async fn handle_file_read_error(&mut self, id: i32, file_num: i32, err: String) {
+        // Drop stale errors for cancelled/unknown jobs
+        if !self.cm_read_job_ids.remove(&id) {
+            log::debug!(
+                "Dropping FileReadError for cancelled/unknown job id={}, file_num={}",
+                id,
+                file_num
+            );
+            return;
+        }
+
+        // Forward error to client
+        self.send(fs::new_error(id, err, file_num)).await;
+    }
+
+    async fn handle_file_digest_from_cm(
+        &mut self,
+        id: i32,
+        file_num: i32,
+        last_modified: u64,
+        file_size: u64,
+        is_resume: bool,
+    ) {
+        // Check if the job is still valid (not cancelled)
+        if !self.cm_read_job_ids.contains(&id) {
+            log::debug!(
+                "Dropping digest for cancelled/unknown job id={}, file_num={}",
+                id,
+                file_num
+            );
+            return;
+        }
+
+        // Forward digest to client for overwrite detection
+        let mut digest = FileTransferDigest::new();
+        digest.id = id;
+        digest.file_num = file_num;
+        digest.last_modified = last_modified;
+        digest.file_size = file_size;
+        digest.is_upload = false; // Server sending to client
+        digest.is_resume = is_resume;
+
+        let mut msg = Message::new();
+        let mut fr = FileResponse::new();
+        fr.set_digest(digest);
+        msg.set_file_response(fr);
+        self.send(msg).await;
+    }
+
+    async fn process_new_read_job(&mut self, mut job: fs::TransferJob, path: String) {
+        let files = job.files().to_owned();
+        let job_type = job.r#type;
+        self.send(fs::new_dir(job.id, path.clone(), files.clone()))
+            .await;
+        job.is_remote = true;
+        job.conn_id = self.inner.id();
+        self.read_jobs.push(job);
+        self.file_timer = crate::rustdesk_interval(time::interval(MILLI1));
+        let audit_path = if job_type == fs::JobType::Printer {
+            "Remote print".to_owned()
+        } else {
+            path
+        };
+        self.post_file_audit(
+            FileAuditType::RemoteSend,
+            &audit_path,
+            Self::get_files_for_audit(job_type, files),
+            json!({}),
+        );
+    }
+
+    async fn handle_all_files_result(
+        &mut self,
+        id: i32,
+        path: String,
+        result: Result<Vec<u8>, String>,
+    ) {
+        match result {
+            Err(err) => {
+                self.send(fs::new_error(id, err, -1)).await;
+            }
+            Ok(bytes) => {
+                // Deserialize FileDirectory from protobuf bytes and send as FileResponse
+                match FileDirectory::parse_from_bytes(&bytes) {
+                    Ok(fd) => {
+                        let mut msg = Message::new();
+                        let mut fr = FileResponse::new();
+                        fr.set_dir(fd);
+                        msg.set_file_response(fr);
+                        self.send(msg).await;
+                    }
+                    Err(e) => {
+                        self.send(fs::new_error(
+                            id,
+                            format!("deserialize failed for {}: {}", path, e),
+                            -1,
+                        ))
+                        .await;
+                    }
+                }
+            }
+        }
+    }
+
     fn read_empty_dirs(&mut self, dir: &str, include_hidden: bool) {
         let dir = dir.to_string();
         self.send_fs(ipc::FS::ReadEmptyDirs {
@@ -3765,6 +4366,57 @@ impl Connection {
             dir,
             include_hidden,
         });
+    }
+
+    /// Create a new read job and start processing it (Connection-side).
+    ///
+    /// This is a generic Connection-side read job creation helper used for:
+    /// - Generic file transfers on non-Windows platforms
+    /// - Printer jobs on all platforms (including Windows)
+    ///
+    /// On Windows, generic file reads are delegated to CM via `start_read_job()` in
+    /// `src/ui_cm_interface.rs` for elevated access. Printer jobs bypass this delegation
+    /// since they read from in-memory data (`MemoryCursor`), not the filesystem.
+    ///
+    /// Both Connection-side and CM-side implementations use `TransferJob::new_read()`
+    /// with similar parameters. When modifying job creation logic, ensure both paths
+    /// stay in sync.
+    async fn create_and_start_read_job(
+        &mut self,
+        id: i32,
+        job_type: fs::JobType,
+        data_source: fs::DataSource,
+        file_num: i32,
+        include_hidden: bool,
+        overwrite_detection: bool,
+        path: String,
+        check_file_limit: bool,
+    ) {
+        match fs::TransferJob::new_read(
+            id,
+            job_type,
+            "".to_string(),
+            data_source,
+            file_num,
+            include_hidden,
+            false,
+            overwrite_detection,
+        ) {
+            Err(err) => {
+                self.send(fs::new_error(id, err, 0)).await;
+            }
+            Ok(job) => {
+                if check_file_limit {
+                    if let Err(msg) =
+                        crate::ui_cm_interface::check_file_count_limit(job.files().len())
+                    {
+                        self.send(fs::new_error(id, msg, -1)).await;
+                        return;
+                    }
+                }
+                self.process_new_read_job(job, path).await;
+            }
+        }
     }
 
     #[inline]
@@ -3933,7 +4585,6 @@ impl Connection {
     #[cfg(feature = "unix-file-copy-paste")]
     async fn handle_file_clip(&mut self, clip: clipboard::ClipboardFile) {
         let is_stopping_allowed = clip.is_stopping_allowed();
-        let is_keyboard_enabled = self.peer_keyboard_enabled();
         let file_transfer_enabled = self.file_transfer_enabled();
         let stop = is_stopping_allowed && !file_transfer_enabled;
         log::debug!(
@@ -4193,6 +4844,23 @@ async fn start_ipc(
                                 let data = ipc::Data::ClickTime(ct);
                                 stream.send(&data).await?;
                             }
+                            // FileBlockFromCM: data is always sent separately via send_raw.
+                            // The data field has #[serde(skip)], so it's empty after deserialization.
+                            // Read the raw data bytes following this message.
+                            //
+                            // Note: Empty data (for empty files) is correctly handled. BytesCodec with
+                            // raw=false adds a length prefix, so next_raw() returns empty BytesMut for
+                            // zero-length frames. This mirrors the WriteBlock pattern below.
+                            ipc::Data::FileBlockFromCM { id, file_num, data: _, compressed, conn_id } => {
+                                let raw_data = stream.next_raw().await?;
+                                tx_from_cm.send(ipc::Data::FileBlockFromCM {
+                                    id,
+                                    file_num,
+                                    data: raw_data.into(),
+                                    compressed,
+                                    conn_id,
+                                })?;
+                            }
                             _ => {
                                 tx_from_cm.send(data)?;
                             }
@@ -4237,6 +4905,10 @@ pub enum AlarmAuditType {
     IpWhitelist = 0,
     ExceedThirtyAttempts = 1,
     SixAttemptsWithinOneMinute = 2,
+    // ExceedThirtyLoginAttempts = 3,
+    // MultipleLoginsAttemptsWithinOneMinute = 4,
+    // MultipleLoginsAttemptsWithinOneHour = 5,
+    ExceedIPv6PrefixAttempts = 6,
 }
 
 pub enum FileAuditType {
@@ -4361,6 +5033,7 @@ impl FileRemoveLogControl {
 }
 
 fn start_wakelock_thread() -> std::sync::mpsc::Sender<(usize, usize)> {
+    // Check if we should keep awake during incoming sessions
     use crate::platform::{get_wakelock, WakeLock};
     let (tx, rx) = std::sync::mpsc::channel::<(usize, usize)>();
     std::thread::spawn(move || {
@@ -4369,9 +5042,15 @@ fn start_wakelock_thread() -> std::sync::mpsc::Sender<(usize, usize)> {
         loop {
             match rx.recv() {
                 Ok((conn_count, remote_count)) => {
-                    if conn_count == 0 {
-                        wakelock = None;
-                        log::info!("drop wakelock");
+                    let keep_awake = config::Config::get_bool_option(
+                        keys::OPTION_KEEP_AWAKE_DURING_INCOMING_SESSIONS,
+                    );
+                    *WAKELOCK_KEEP_AWAKE_OPTION.lock().unwrap() = Some(keep_awake);
+                    if conn_count == 0 || !keep_awake {
+                        if wakelock.is_some() {
+                            wakelock = None;
+                            log::info!("drop wakelock");
+                        }
                     } else {
                         let mut display = remote_count > 0;
                         if let Some(_w) = wakelock.as_mut() {
@@ -4449,9 +5128,9 @@ impl Drop for Connection {
 
         #[cfg(target_os = "windows")]
         if let Some(TerminalUserToken::CurrentLogonUser(token)) = self.terminal_user_token.take() {
-            if token != 0 {
+            if token.as_raw() != 0 {
                 unsafe {
-                    hbb_common::allow_err!(CloseHandle(HANDLE(token as _)));
+                    hbb_common::allow_err!(CloseHandle(HANDLE(token.as_raw() as _)));
                 };
             }
         }
@@ -4526,9 +5205,13 @@ impl Retina {
 
     #[inline]
     fn on_mouse_event(&mut self, e: &mut MouseEvent, current: usize) {
-        let evt_type = e.mask & 0x7;
-        if evt_type == crate::input::MOUSE_TYPE_WHEEL {
-            // x and y are always 0, +1 or -1
+        let evt_type = e.mask & crate::input::MOUSE_TYPE_MASK;
+        // Delta-based events do not contain absolute coordinates.
+        // Avoid applying Retina coordinate scaling to them.
+        if evt_type == crate::input::MOUSE_TYPE_WHEEL
+            || evt_type == crate::input::MOUSE_TYPE_TRACKPAD
+            || evt_type == crate::input::MOUSE_TYPE_MOVE_RELATIVE
+        {
             return;
         }
         let Some(d) = self.displays.get(current) else {
@@ -4564,6 +5247,41 @@ impl Retina {
     }
 }
 
+/// Get control permission state from CONTROL_PERMISSIONS_ARRAY.
+/// Returns: Some(false) if any disable, Some(true) if any enable (and no disable), None if not set.
+pub fn get_control_permission_state(
+    permission: hbb_common::rendezvous_proto::control_permissions::Permission,
+    disable_if_has_disabled: bool,
+) -> Option<bool> {
+    let control_permissions = CONTROL_PERMISSIONS_ARRAY.lock().unwrap();
+    let mut has_enable = false;
+    let mut has_disable = false;
+    for (_, cp) in control_permissions.iter() {
+        match crate::get_control_permission(cp.permissions, permission) {
+            Some(false) => has_disable = true,
+            Some(true) => has_enable = true,
+            None => {}
+        }
+    }
+    if disable_if_has_disabled {
+        if has_disable {
+            Some(false)
+        } else if has_enable {
+            Some(true)
+        } else {
+            None
+        }
+    } else {
+        if has_enable {
+            Some(true)
+        } else if has_disable {
+            Some(false)
+        } else {
+            None
+        }
+    }
+}
+
 pub struct AuthedConn {
     pub conn_id: i32,
     pub conn_type: AuthConnType,
@@ -4575,6 +5293,7 @@ pub struct AuthedConn {
 mod raii {
     // ALIVE_CONNS: all connections, including unauthorized connections
     // AUTHED_CONNS: all authorized connections
+    // CONTROL_PERMISSIONS_ARRAY: all non-None control permissions
 
     use super::*;
     pub struct ConnectionID(i32);
@@ -4642,6 +5361,17 @@ mod raii {
                 .send((conn_count, remote_count)));
         }
 
+        pub fn check_wake_lock_on_setting_changed() {
+            let current = config::Config::get_bool_option(
+                keys::OPTION_KEEP_AWAKE_DURING_INCOMING_SESSIONS,
+            );
+            let cached = *WAKELOCK_KEEP_AWAKE_OPTION.lock().unwrap();
+            if cached != Some(current) {
+                Self::check_wake_lock();
+            }
+        }
+
+        #[cfg(windows)]
         pub fn non_port_forward_conn_count() -> usize {
             AUTHED_CONNS
                 .lock()
@@ -4737,6 +5467,9 @@ mod raii {
                     .unwrap()
                     .on_connection_close(self.0);
             }
+            // Clear per-connection state to avoid stale behavior if conn ids are reused.
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            clear_relative_mouse_active(self.0);
             AUTHED_CONNS.lock().unwrap().retain(|c| c.conn_id != self.0);
             let remote_count = AUTHED_CONNS
                 .lock()
@@ -4757,6 +5490,39 @@ mod raii {
                 scrap::wayland::pipewire::try_close_session();
             }
             Self::check_wake_lock();
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            {
+                use crate::whiteboard;
+                whiteboard::unregister_whiteboard(whiteboard::get_key_cursor(self.0));
+            }
+        }
+    }
+
+    pub struct ControlPermissionsID {
+        id: i32,
+        control_permissions: Option<ControlPermissions>,
+    }
+
+    impl Drop for ControlPermissionsID {
+        fn drop(&mut self) {
+            if self.control_permissions.is_some() {
+                let mut lock = CONTROL_PERMISSIONS_ARRAY.lock().unwrap();
+                lock.retain(|(conn_id, _)| *conn_id != self.id);
+            }
+        }
+    }
+    impl ControlPermissionsID {
+        pub fn new(id: i32, control_permissions: &Option<ControlPermissions>) -> Self {
+            if let Some(s) = control_permissions {
+                CONTROL_PERMISSIONS_ARRAY
+                    .lock()
+                    .unwrap()
+                    .push((id, s.clone()));
+            }
+            Self {
+                id,
+                control_permissions: control_permissions.clone(),
+            }
         }
     }
 }
@@ -4795,5 +5561,12 @@ mod test {
         let pos = msg.cursor_position();
         assert_eq!(pos.x, 510);
         assert_eq!(pos.y, 510);
+    }
+
+    #[test]
+    fn ipv6() {
+        assert!(Ipv6Addr::from_str("::1").is_ok());
+        assert!(Ipv6Addr::from_str("127.0.0.1").is_err());
+        assert!(Ipv6Addr::from_str("0").is_err());
     }
 }

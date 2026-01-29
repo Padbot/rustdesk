@@ -8,7 +8,6 @@ import 'package:flutter_hbb/mobile/pages/settings_page.dart';
 import 'package:flutter_hbb/models/chat_model.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:get/get.dart';
-import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../common.dart';
@@ -50,6 +49,8 @@ class ServerModel with ChangeNotifier {
   final List<Client> _clients = [];
 
   Timer? cmHiddenTimer;
+
+  final _wakelockKey = UniqueKey();
 
   bool get isStart => _isStart;
 
@@ -474,10 +475,8 @@ class ServerModel with ChangeNotifier {
     await parent.target?.invokeMethod("stop_service");
     await bind.mainStopService();
     notifyListeners();
-    if (!isLinux) {
-      // current linux is not supported
-      WakelockPlus.disable();
-    }
+    // for androidUpdatekeepScreenOn only
+    WakelockManager.disable(_wakelockKey);
   }
 
   Future<bool> setPermanentPassword(String newPW) async {
@@ -624,10 +623,10 @@ class ServerModel with ChangeNotifier {
       client.isFileTransfer
           ? "Transfer file"
           : client.isViewCamera
-          ? "View camera"
-          : client.isTerminal
-          ? "Terminal"
-          : "Share screen",
+              ? "View camera"
+              : client.isTerminal
+                  ? "Terminal"
+                  : "Share screen",
       'Do you accept?',
       'android_new_connection_tip',
           () => sendLoginResponse(client, false),
@@ -806,14 +805,12 @@ class ServerModel with ChangeNotifier {
     final on = ((keepScreenOn == KeepScreenOn.serviceOn) && _isStart) ||
         (keepScreenOn == KeepScreenOn.duringControlled &&
             _clients.map((e) => !e.disconnected).isNotEmpty);
-    try {
+    if (on != await WakelockPlus.enabled) {
       if (on) {
-        await WakelockPlus.enable();
+        WakelockPlus.enable();
       } else {
-        await WakelockPlus.disable();
+        WakelockPlus.disable();
       }
-    } catch (e) {
-      debugPrint("androidUpdatekeepScreenOn failed: $e");
     }
   }
 }
