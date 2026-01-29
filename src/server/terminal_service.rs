@@ -73,7 +73,7 @@ impl TerminalChildOps for PortableChildWrapper {
     fn try_wait(&mut self) -> std::io::Result<Option<i32>> {
         match self.0.try_wait()? {
             Some(status) => {
-                #[cfg(unix)]
+                #[cfg(all(unix, not(target_os = "macos")))]
                 {
                     if let Some(code) = status.code() {
                         return Ok(Some(code));
@@ -83,9 +83,16 @@ impl TerminalChildOps for PortableChildWrapper {
                     }
                     return Ok(Some(-1));
                 }
+                #[cfg(all(unix, target_os = "macos"))]
+                {
+                    // Fallback for macOS where portable_pty::ExitStatus may not expose code()/signal()
+                    return Ok(Some(-1));
+                }
                 #[cfg(not(unix))]
                 {
-                    return Ok(status.code().or(Some(-1)));
+                    // On non-Unix targets (e.g. Windows), portable_pty::ExitStatus may not expose code()/signal().
+                    // Use a generic fallback exit code.
+                    return Ok(Some(-1));
                 }
             }
             None => Ok(None),
@@ -974,7 +981,11 @@ impl TerminalServiceProxy {
             #[allow(unused_mut)]
             let mut cmd = CommandBuilder::new(&shell);
             #[cfg(target_os = "windows")]
-            if let Some(token) = &self.user_token { cmd.set_user_token(*token as _); }
+            if let Some(token) = &self.user_token {
+                use crate::server::terminal_helper::WinHANDLE;
+                let handle = WinHANDLE(token.as_raw() as isize);
+                cmd.set_user_token(handle);
+            }
 
             log::debug!("Spawning shell process...");
             let child = pty_pair.slave.spawn_command(cmd).context("Failed to spawn command")?;
