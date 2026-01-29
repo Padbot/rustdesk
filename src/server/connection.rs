@@ -2173,11 +2173,22 @@ impl Connection {
                     }
                 }
                 Some(login_request::Union::PortForward(mut pf)) => {
-                    if !Self::permission(keys::OPTION_ENABLE_TUNNEL, &self.control_permissions) {
+                    //#region PortForward 权限检查（Android 放行，无需 UI 开关）
+                    // 说明：
+                    // - Android 端仅需“服务端支持”，不提供 UI 的情况下也允许端口转发。
+                    // - 非 Android 平台仍遵循 OPTION_ENABLE_TUNNEL 权限校验。
+                    let permitted = if cfg!(target_os = "android") {
+                        log::info!("Android target: bypass OPTION_ENABLE_TUNNEL check for port forwarding");
+                        true
+                    } else {
+                        Self::permission(keys::OPTION_ENABLE_TUNNEL, &self.control_permissions)
+                    };
+                    if !permitted {
                         self.send_login_error("No permission of IP tunneling").await;
                         sleep(1.).await;
                         return false;
                     }
+                    //#endregion
                     let mut is_rdp = false;
                     if pf.host == "RDP" && pf.port == 0 {
                         pf.host = "localhost".to_owned();
