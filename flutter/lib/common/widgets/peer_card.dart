@@ -979,7 +979,7 @@ class RecentPeerCard extends BasePeerCard {
 
     final List favs = (await bind.mainGetFav()).toList();
 
-    if (isDesktop && peer.platform != kPeerPlatformAndroid) {
+    if (isDesktop) {
       menuItems.add(_tcpTunnelingAction(context));
     }
     // menuItems.add(await _openNewConnInOptAction(peer.id));
@@ -1042,7 +1042,7 @@ class FavoritePeerCard extends BasePeerCard {
       menuItems.add(_terminalRunAsAdminAction(context));
     }
 
-    if (isDesktop && peer.platform != kPeerPlatformAndroid) {
+    if (isDesktop) {
       menuItems.add(_tcpTunnelingAction(context));
     }
     // menuItems.add(await _openNewConnInOptAction(peer.id));
@@ -1104,7 +1104,7 @@ class DiscoveredPeerCard extends BasePeerCard {
 
     final List favs = (await bind.mainGetFav()).toList();
 
-    if (isDesktop && peer.platform != kPeerPlatformAndroid) {
+    if (isDesktop) {
       menuItems.add(_tcpTunnelingAction(context));
     }
     // menuItems.add(await _openNewConnInOptAction(peer.id));
@@ -1161,7 +1161,7 @@ class AddressBookPeerCard extends BasePeerCard {
       menuItems.add(_terminalRunAsAdminAction(context));
     }
 
-    if (isDesktop && peer.platform != kPeerPlatformAndroid) {
+    if (isDesktop) {
       menuItems.add(_tcpTunnelingAction(context));
     }
     // menuItems.add(await _openNewConnInOptAction(peer.id));
@@ -1318,7 +1318,7 @@ class MyGroupPeerCard extends BasePeerCard {
       menuItems.add(_terminalRunAsAdminAction(context));
     }
 
-    if (isDesktop && peer.platform != kPeerPlatformAndroid) {
+    if (isDesktop) {
       menuItems.add(_tcpTunnelingAction(context));
     }
     // menuItems.add(await _openNewConnInOptAction(peer.id));
