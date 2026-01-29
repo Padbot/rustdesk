@@ -1429,6 +1429,7 @@ impl TerminalServiceProxy {
     }
 
     /// Resize PTY directly (used for non-helper mode)
+    #[cfg(not(target_os = "android"))]
     fn resize_pty(session: &TerminalSession, resize: &ResizeTerminal) -> Result<()> {
         if let Some(pty_pair) = &session.pty_pair {
             pty_pair.master.resize(PtySize {
