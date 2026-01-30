@@ -49,7 +49,7 @@ pub struct UiStatus {
 
 // Android: 从 /sdcard/robot/config/base.properties 读取 export_serial_number
 #[cfg(target_os = "android")]
-fn get_export_serial_number() -> Option<String> {
+pub fn get_export_serial_number() -> Option<String> {
     const PATH: &str = "/sdcard/robot/config/base.properties";
     let content = std::fs::read_to_string(PATH).ok()?;
     for raw in content.lines() {
@@ -799,6 +799,19 @@ pub fn remove_discovered(id: String) {
 
 #[inline]
 pub fn get_uuid() -> String {
+    //#region 获取UUID - Android平台使用export_serial_number
+    #[cfg(target_os = "android")]
+    {
+        // 优先尝试从export_serial_number获取UUID
+        if let Some(serial_number) = get_export_serial_number() {
+            log::info!("Using export_serial_number as UUID: {}", serial_number);
+            return crate::encode64(serial_number.into_bytes());
+        }
+        
+        // 如果无法获取export_serial_number，回退到默认UUID生成
+        log::warn!("Failed to get export_serial_number, falling back to default UUID");
+    }
+    //#endregion
     crate::encode64(hbb_common::get_uuid())
 }
 
@@ -1355,8 +1368,21 @@ pub async fn change_id_shared_(id: String, old_id: String) -> &'static str {
             .as_bytes()
             .to_vec(),
     );
-    #[cfg(any(target_os = "android", target_os = "ios"))]
+    //#region 获取UUID - Android平台使用export_serial_number
+    #[cfg(target_os = "android")]
+    let uuid = {
+        // 优先尝试从export_serial_number获取UUID
+        if let Some(serial_number) = get_export_serial_number() {
+            log::info!("Using export_serial_number as UUID for change_id: {}", serial_number);
+            Bytes::from(serial_number.into_bytes())
+        } else {
+            log::warn!("Failed to get export_serial_number, falling back to default UUID for change_id");
+            Bytes::from(hbb_common::get_uuid())
+        }
+    };
+    #[cfg(target_os = "ios")]
     let uuid = Bytes::from(hbb_common::get_uuid());
+    //#endregion
 
     if uuid.is_empty() {
         log::error!("Failed to change id, uuid is_empty");
@@ -1399,7 +1425,18 @@ pub async fn change_id_shared_(id: String, old_id: String) -> &'static str {
     #[cfg(target_os = "android")]
     if err == "Not available" {
         let base_serial = get_export_serial_number();
-        let uuid = Bytes::from(hbb_common::get_uuid());
+        //#region 获取UUID - Android平台使用export_serial_number
+        let uuid = {
+            // 优先尝试从export_serial_number获取UUID
+            if let Some(ref serial_number) = base_serial {
+                log::info!("Using export_serial_number as UUID for retry: {}", serial_number);
+                Bytes::from(serial_number.clone().into_bytes())
+            } else {
+                log::warn!("Failed to get export_serial_number, falling back to default UUID for retry");
+                Bytes::from(hbb_common::get_uuid())
+            }
+        };
+        //#endregion
         let mut prefix_num: u32 = 1;
         loop {
             let candidate = if let Some(base) = &base_serial {

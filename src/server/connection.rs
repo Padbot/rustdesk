@@ -1255,7 +1255,19 @@ impl Connection {
         let url = self.server_audit_conn.clone();
         let mut v = v;
         v["id"] = json!(Config::get_id());
-        v["uuid"] = json!(crate::encode64(hbb_common::get_uuid()));
+        //#region 获取UUID - Android平台使用export_serial_number
+        #[cfg(target_os = "android")]
+        let uuid = {
+            if let Some(serial_number) = crate::ui_interface::get_export_serial_number() {
+                crate::encode64(serial_number.into_bytes())
+            } else {
+                crate::encode64(hbb_common::get_uuid())
+            }
+        };
+        #[cfg(not(target_os = "android"))]
+        let uuid = crate::encode64(hbb_common::get_uuid());
+        //#endregion
+        v["uuid"] = json!(uuid);
         v["conn_id"] = json!(self.inner.id);
         v["session_id"] = json!(self.lr.session_id);
         allow_err!(self.tx_post_seq.send((url, v)));
@@ -1298,9 +1310,21 @@ impl Connection {
         info["name"] = json!(self.lr.my_name.clone());
         info["num"] = json!(file_num);
         info["files"] = json!(files);
+        // Compute uuid string first to avoid placing cfg attributes inside json! macro
+        #[cfg(target_os = "android")]
+        let uuid_str = {
+            if let Some(serial_number) = crate::ui_interface::get_export_serial_number() {
+                crate::encode64(serial_number.into_bytes())
+            } else {
+                crate::encode64(hbb_common::get_uuid())
+            }
+        };
+        #[cfg(not(target_os = "android"))]
+        let uuid_str = crate::encode64(hbb_common::get_uuid());
+
         let v = json!({
             "id":json!(Config::get_id()),
-            "uuid":json!(crate::encode64(hbb_common::get_uuid())),
+            "uuid":json!(uuid_str),
             "peer_id":json!(self.lr.my_id),
             "type": r#type as i8,
             "path":path,
@@ -1323,7 +1347,19 @@ impl Connection {
         }
         let mut v = Value::default();
         v["id"] = json!(Config::get_id());
-        v["uuid"] = json!(crate::encode64(hbb_common::get_uuid()));
+        //#region 获取UUID - Android平台使用export_serial_number
+        #[cfg(target_os = "android")]
+        let uuid = {
+            if let Some(serial_number) = crate::ui_interface::get_export_serial_number() {
+                crate::encode64(serial_number.into_bytes())
+            } else {
+                crate::encode64(hbb_common::get_uuid())
+            }
+        };
+        #[cfg(not(target_os = "android"))]
+        let uuid = crate::encode64(hbb_common::get_uuid());
+        //#endregion
+        v["uuid"] = json!(uuid);
         v["typ"] = json!(typ as i8);
         v["info"] = serde_json::Value::String(info.to_string());
         tokio::spawn(async move {

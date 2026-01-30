@@ -1970,7 +1970,22 @@ pub fn is_empty_uni_link(arg: &str) -> bool {
 pub fn get_hwid() -> Bytes {
     use hbb_common::sha2::{Digest, Sha256};
 
+    //#region 获取UUID - Android平台使用export_serial_number
+    #[cfg(target_os = "android")]
+    let uuid = {
+        // 尝试从export_serial_number获取UUID
+        if let Some(serial_number) = crate::ui_interface::get_export_serial_number() {
+            log::info!("Using export_serial_number as UUID for hwid: {}", serial_number);
+            serial_number.into_bytes()
+        } else {
+            log::warn!("Failed to get export_serial_number, falling back to default UUID for hwid");
+            hbb_common::get_uuid()
+        }
+    };
+    #[cfg(not(target_os = "android"))]
     let uuid = hbb_common::get_uuid();
+    //#endregion
+    
     let mut hasher = Sha256::new();
     hasher.update(&uuid);
     Bytes::from(hasher.finalize().to_vec())
