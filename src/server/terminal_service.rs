@@ -90,9 +90,37 @@ impl TerminalChildOps for PortableChildWrapper {
                 }
                 #[cfg(not(unix))]
                 {
-                    // On non-Unix targets (e.g. Windows), portable_pty::ExitStatus may not expose code()/signal().
-                    // Use a generic fallback exit code.
-                    return Ok(Some(-1));
+                    // On Windows, try to query real exit code via process handle using PID
+                    #[cfg(target_os = "windows")]
+                    {
+                        use windows::Win32::Foundation::{CloseHandle, HANDLE, STILL_ACTIVE};
+                        use windows::Win32::System::Threading::{GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+
+                        if let Some(pid) = self.0.process_id() {
+                            unsafe {
+                                let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+                                if h.0 != 0 {
+                                    let mut code: u32 = 0;
+                                    let ok = GetExitCodeProcess(h, &mut code).as_bool();
+                                    let _ = CloseHandle(h);
+                                    if ok {
+                                        if code == STILL_ACTIVE.0 as u32 {
+                                            return Ok(None);
+                                        } else {
+                                            return Ok(Some(code as i32));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // Fallback if we cannot query exit code
+                        return Ok(Some(-1));
+                    }
+                    // Other non-Unix (if any) fallback
+                    #[cfg(not(target_os = "windows"))]
+                    {
+                        return Ok(Some(-1));
+                    }
                 }
             }
             None => Ok(None),
@@ -982,8 +1010,8 @@ impl TerminalServiceProxy {
             let mut cmd = CommandBuilder::new(&shell);
             #[cfg(target_os = "windows")]
             if let Some(token) = &self.user_token {
-                use crate::server::terminal_helper::WinHANDLE;
-                let handle = WinHANDLE(token.as_raw() as isize);
+                // portable_pty on Windows expects a raw HANDLE pointer (*mut c_void)
+                let handle = token.as_raw() as *mut std::ffi::c_void;
                 cmd.set_user_token(handle);
             }
 

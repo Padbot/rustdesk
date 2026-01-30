@@ -41,7 +41,7 @@ jobs:
 
       - name: Install build runtime
         run: |
-          brew install llvm create-dmg
+          brew install llvm
           if command -v pkg-config &>/dev/null; then echo "pkg-config is already installed"; else brew install pkg-config; fi
 
       - name: Install NASM 2.16.x
@@ -127,26 +127,47 @@ jobs:
           fi
           ./build.py --flutter --hwcodec --unix-file-copy-paste ${{ matrix.job.extra-build-args }}
 
-      - name: create unsigned dmg
-        run: |
-          CREATE_DMG="$(command -v create-dmg)"
-          CREATE_DMG="$(readlink -f "$CREATE_DMG")"
-          sed -i -e 's/MAXIMUM_UNMOUNTING_ATTEMPTS=3/MAXIMUM_UNMOUNTING_ATTEMPTS=7/' "$CREATE_DMG"
-          create-dmg --icon "RustDesk.app" 200 190 --hide-extension "RustDesk.app" --window-size 800 400 --app-drop-link 600 185 rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.dmg ./flutter/build/macos/Build/Products/Release/RustDesk.app
+      
 
-      - name: Upload unsigned macOS app
+      - name: create installer pkg with ad-hoc sign postinstall
+        shell: bash
+        run: |
+          APP_PATH="./flutter/build/macos/Build/Products/Release/RustDesk.app"
+          PKG_SCRIPTS_DIR="./pkg_scripts"
+          mkdir -p "$PKG_SCRIPTS_DIR"
+          cat > "$PKG_SCRIPTS_DIR/postinstall" <<'EOS'
+          #!/bin/bash
+          set -e
+          APP="/Applications/RustDesk.app"
+          # Remove quarantine if any
+          /usr/bin/xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
+          # Ad-hoc sign to bypass Gatekeeper for internal usage
+          /usr/bin/codesign --force --deep --sign - "$APP"
+          exit 0
+          EOS
+          chmod +x "$PKG_SCRIPTS_DIR/postinstall"
+          # Build PKG that installs RustDesk.app into /Applications and runs postinstall
+          PKG_NAME="rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}-adhoc.pkg"
+          pkgbuild \
+            --root / \
+            --install-location / \
+            --component "$APP_PATH" \
+            --scripts "$PKG_SCRIPTS_DIR" \
+            "$PKG_NAME"
+
+      - name: Upload unsigned macOS installer pkg (ad-hoc postinstall)
         uses: actions/upload-artifact@master
         with:
-          name: rustdesk-unsigned-macos-${{ matrix.job.arch }}
-          path: rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.dmg
+          name: rustdesk-unsigned-macos-installer-${{ matrix.job.arch }}
+          path: rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}-adhoc.pkg
 
-      - name: Publish DMG package
+      - name: Publish Release (unsigned pkg)
         uses: softprops/action-gh-release@v1
         with:
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
           files: |
-            rustdesk*-${{ matrix.job.arch }}.dmg
+            rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}-adhoc.pkg
 
   build-for-windows-flutter:
     name: ${{ matrix.job.target }}
