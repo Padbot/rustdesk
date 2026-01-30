@@ -149,9 +149,8 @@ jobs:
           # Build PKG that installs RustDesk.app into /Applications and runs postinstall
           PKG_NAME="rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}-adhoc.pkg"
           pkgbuild \
-            --root / \
-            --install-location / \
             --component "$APP_PATH" \
+            --install-location /Applications \
             --scripts "$PKG_SCRIPTS_DIR" \
             "$PKG_NAME"
 
