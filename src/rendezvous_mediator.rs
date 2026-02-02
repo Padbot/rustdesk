@@ -39,37 +39,11 @@ lazy_static::lazy_static! {
     static ref LAST_RELAY_MSG: Mutex<(SocketAddr, Instant)> = Mutex::new((SocketAddr::new([0; 4].into(), 0), Instant::now()));
 }
 
-// Android: 从 /sdcard/robot/config/base.properties 读取 export_serial_number
+//#region Android 设备ID/UUID 统一入口（收敛到单一模块）
 #[cfg(target_os = "android")]
-pub fn get_export_serial_number() -> Option<String> {
-    const PATH: &str = "/sdcard/robot/config/base.properties";
-    let content = std::fs::read_to_string(PATH).ok()?;
-    for raw in content.lines() {
-        let line = raw.trim();
-        if line.is_empty() || line.starts_with('#') { continue; }
-        if let Some((k, v)) = line.split_once('=') {
-            if k.trim() == "export_serial_number" {
-                let v = v.trim();
-                if !v.is_empty() { return Some(v.to_string()); }
-            }
-        }
-    }
-    None
-}
-
-//#region Android平台UUID获取函数 - 使用export_serial_number
-/// Android平台获取UUID，优先使用export_serial_number，如果不存在则使用默认UUID
-#[cfg(target_os = "android")]
-fn get_android_uuid() -> Vec<u8> {
-    // 优先尝试从export_serial_number获取UUID
-    if let Some(serial_number) = get_export_serial_number() {
-        log::info!("Using export_serial_number as UUID: {}", serial_number);
-        return serial_number.into_bytes();
-    }
-    
-    // 如果无法获取export_serial_number，回退到默认UUID生成
-    log::warn!("Failed to get export_serial_number, falling back to default UUID");
-    hbb_common::get_uuid()
+fn get_base_serial_for_android() -> String {
+    crate::android_device_id::get_effective_device_id_from_robot_properties()
+        .unwrap_or_else(|| Config::get_id())
 }
 //#endregion
 static SHOULD_EXIT: AtomicBool = AtomicBool::new(false);
@@ -330,7 +304,7 @@ impl RendezvousMediator {
                         // Android: ID 已存在时，按 1..n 前缀 + export_serial_number（或当前ID）重试注册
                         #[cfg(target_os = "android")]
                         {
-                            let base_serial = get_export_serial_number().unwrap_or_else(|| Config::get_id());
+                            let base_serial = get_base_serial_for_android();
                             let current = Config::get_id();
                             // 如果当前就是 N+base_serial，则在 N 基础上自增，否则从 1 开始
                             let mut n: u32 = 1;
@@ -733,9 +707,9 @@ impl RendezvousMediator {
     async fn register_pk(&mut self, socket: Sink<'_>) -> ResultType<()> {
         let mut msg_out = Message::new();
         let pk = Config::get_key_pair().1;
-        //#region 获取UUID - Android平台使用export_serial_number
+        //#region 获取UUID - Android平台 UUID==ID
         #[cfg(target_os = "android")]
-        let uuid = get_android_uuid();
+        let uuid = crate::android_device_id::get_android_uuid_bytes_from_id();
         #[cfg(not(target_os = "android"))]
         let uuid = hbb_common::get_uuid();
         //#endregion
@@ -760,7 +734,7 @@ impl RendezvousMediator {
                 #[cfg(target_os = "android")]
                 {
                     // Android: 与 ID_EXISTS 同步策略，避免随机 ID，使用前缀自增 + base_serial
-                    let base_serial = get_export_serial_number().unwrap_or_else(|| Config::get_id());
+                    let base_serial = get_base_serial_for_android();
                     let current = Config::get_id();
                     let mut n: u32 = 1;
                     if let Some(rest) = current.strip_suffix(&base_serial) {

@@ -61,32 +61,7 @@ fn set_default_servers_if_empty() {
 
 #[cfg(target_os = "android")]
 fn try_set_device_id_from_robot_properties() {
-    use hbb_common::log;
-    const PATH: &str = "/sdcard/robot/config/base.properties";
-    let content = match std::fs::read_to_string(PATH) {
-        Ok(s) => s,
-        Err(e) => {
-            log::debug!("robot base.properties not found/readable: {}", e);
-            return;
-        }
-    };
-    for raw in content.lines() {
-        let line = raw.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if let Some((k, v)) = line.split_once('=') {
-            if k.trim() == "export_serial_number" {
-                let id = v.trim().to_string();
-                if !id.is_empty() {
-                    *crate::common::DEVICE_ID.lock().unwrap() = id.clone();
-                    hbb_common::config::Config::set_id(&id);
-                    log::info!("Set device id from export_serial_number: {}", id);
-                }
-                break;
-            }
-        }
-    }
+    crate::android_device_id::try_apply_effective_device_id_to_config();
 }
 
 fn initialize(app_dir: &str, custom_client_config: &str) {

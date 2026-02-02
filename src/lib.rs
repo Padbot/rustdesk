@@ -1,6 +1,7 @@
 mod keyboard;
 /// cbindgen:ignore
 pub mod platform;
+mod android_device_id;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub use platform::{
     clip_cursor, get_cursor, get_cursor_data, get_cursor_pos, get_focused_display,

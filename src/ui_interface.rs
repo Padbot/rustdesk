@@ -47,24 +47,6 @@ pub struct UiStatus {
     pub video_conn_count: usize,
 }
 
-// Android: 从 /sdcard/robot/config/base.properties 读取 export_serial_number
-#[cfg(target_os = "android")]
-pub fn get_export_serial_number() -> Option<String> {
-    const PATH: &str = "/sdcard/robot/config/base.properties";
-    let content = std::fs::read_to_string(PATH).ok()?;
-    for raw in content.lines() {
-        let line = raw.trim();
-        if line.is_empty() || line.starts_with('#') { continue; }
-        if let Some((k, v)) = line.split_once('=') {
-            if k.trim() == "export_serial_number" {
-                let v = v.trim();
-                if !v.is_empty() { return Some(v.to_string()); }
-            }
-        }
-    }
-    None
-}
-
 #[derive(Debug, Clone, Serialize)]
 pub struct LoginDeviceInfo {
     pub os: String,
@@ -799,17 +781,10 @@ pub fn remove_discovered(id: String) {
 
 #[inline]
 pub fn get_uuid() -> String {
-    //#region 获取UUID - Android平台使用export_serial_number
+    //#region 获取UUID - Android平台 UUID==ID
     #[cfg(target_os = "android")]
     {
-        // 优先尝试从export_serial_number获取UUID
-        if let Some(serial_number) = get_export_serial_number() {
-            log::info!("Using export_serial_number as UUID: {}", serial_number);
-            return crate::encode64(serial_number.into_bytes());
-        }
-        
-        // 如果无法获取export_serial_number，回退到默认UUID生成
-        log::warn!("Failed to get export_serial_number, falling back to default UUID");
+        return crate::android_device_id::get_android_uuid_b64_from_id();
     }
     //#endregion
     crate::encode64(hbb_common::get_uuid())
@@ -1361,6 +1336,21 @@ pub async fn change_id_shared_(id: String, old_id: String) -> &'static str {
         return INVALID_FORMAT;
     }
 
+    //#region Android 修改ID：写入 base.properties 的 export_serial_number_manual 并立刻生效
+    #[cfg(target_os = "android")]
+    {
+        if let Err(e) = crate::android_device_id::write_export_serial_number_manual(&id) {
+            log::error!("Failed to write export_serial_number_manual: {e}");
+            return UNKNOWN_ERROR;
+        }
+        // 立刻生效：更新运行时ID并触发重注册
+        Config::set_key_confirmed(false);
+        Config::set_id(&id);
+        crate::rendezvous_mediator::RendezvousMediator::restart();
+        return "";
+    }
+    //#endregion
+
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     let uuid = Bytes::from(
         hbb_common::machine_uid::get()
@@ -1368,21 +1358,8 @@ pub async fn change_id_shared_(id: String, old_id: String) -> &'static str {
             .as_bytes()
             .to_vec(),
     );
-    //#region 获取UUID - Android平台使用export_serial_number
-    #[cfg(target_os = "android")]
-    let uuid = {
-        // 优先尝试从export_serial_number获取UUID
-        if let Some(serial_number) = get_export_serial_number() {
-            log::info!("Using export_serial_number as UUID for change_id: {}", serial_number);
-            Bytes::from(serial_number.into_bytes())
-        } else {
-            log::warn!("Failed to get export_serial_number, falling back to default UUID for change_id");
-            Bytes::from(hbb_common::get_uuid())
-        }
-    };
     #[cfg(target_os = "ios")]
     let uuid = Bytes::from(hbb_common::get_uuid());
-    //#endregion
 
     if uuid.is_empty() {
         log::error!("Failed to change id, uuid is_empty");
@@ -1419,61 +1396,6 @@ pub async fn change_id_shared_(id: String, old_id: String) -> &'static str {
             Config::set_id(&id);
         }
         return "";
-    }
-
-    // Android: 若 ID 已存在，按 1..n 前缀 + export_serial_number（或原 id）重试注册
-    #[cfg(target_os = "android")]
-    if err == "Not available" {
-        let base_serial = get_export_serial_number();
-        //#region 获取UUID - Android平台使用export_serial_number
-        let uuid = {
-            // 优先尝试从export_serial_number获取UUID
-            if let Some(ref serial_number) = base_serial {
-                log::info!("Using export_serial_number as UUID for retry: {}", serial_number);
-                Bytes::from(serial_number.clone().into_bytes())
-            } else {
-                log::warn!("Failed to get export_serial_number, falling back to default UUID for retry");
-                Bytes::from(hbb_common::get_uuid())
-            }
-        };
-        //#endregion
-        let mut prefix_num: u32 = 1;
-        loop {
-            let candidate = if let Some(base) = &base_serial {
-                format!("{}{}", prefix_num, base)
-            } else {
-                format!("{}{}", prefix_num, id)
-            };
-            let rendezvous_servers = Config::get_rendezvous_servers();
-            let mut futs = Vec::new();
-            let err2: Arc<Mutex<&str>> = Default::default();
-            for rendezvous_server in rendezvous_servers {
-                let err2 = err2.clone();
-                let uuid = uuid.clone();
-                let old_id = old_id.clone();
-                let candidate2 = candidate.clone();
-                futs.push(tokio::spawn(async move {
-                    let tmp = check_id(rendezvous_server, old_id, candidate2, uuid).await;
-                    if !tmp.is_empty() {
-                        *err2.lock().unwrap() = tmp;
-                    }
-                }));
-            }
-            join_all(futs).await;
-            let err2 = *err2.lock().unwrap();
-            if err2.is_empty() {
-                Config::set_key_confirmed(false);
-                Config::set_id(&candidate);
-                return "";
-            }
-            if err2 != "Not available" {
-                return err2;
-            }
-            prefix_num += 1;
-            if prefix_num > 1000 { // 防止极端情况下无限循环
-                return err;
-            }
-        }
     }
 
     err

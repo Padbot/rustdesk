@@ -131,15 +131,9 @@ async fn start_hbbs_sync_async() {
                 if need_upload {
                     v["version"] = json!(crate::VERSION);
                     v["id"] = json!(id);
-                    //#region 获取UUID - Android平台使用export_serial_number
+                    //#region 获取UUID - Android平台 UUID==ID
                     #[cfg(target_os = "android")]
-                    let uuid = {
-                        if let Some(serial_number) = crate::ui_interface::get_export_serial_number() {
-                            crate::encode64(serial_number.into_bytes())
-                        } else {
-                            crate::encode64(hbb_common::get_uuid())
-                        }
-                    };
+                    let uuid = crate::android_device_id::get_android_uuid_b64_from_id();
                     #[cfg(not(target_os = "android"))]
                     let uuid = crate::encode64(hbb_common::get_uuid());
                     //#endregion
@@ -246,15 +240,9 @@ async fn start_hbbs_sync_async() {
                 last_sent = Some(Instant::now());
                 let mut v = Value::default();
                 v["id"] = json!(id);
-                //#region 获取UUID - Android平台使用export_serial_number
+                //#region 获取UUID - Android平台 UUID==ID
                 #[cfg(target_os = "android")]
-                let uuid = {
-                    if let Some(serial_number) = crate::ui_interface::get_export_serial_number() {
-                        crate::encode64(serial_number.into_bytes())
-                    } else {
-                        crate::encode64(hbb_common::get_uuid())
-                    }
-                };
+                let uuid = crate::android_device_id::get_android_uuid_b64_from_id();
                 #[cfg(not(target_os = "android"))]
                 let uuid = crate::encode64(hbb_common::get_uuid());
                 //#endregion

@@ -1255,15 +1255,9 @@ impl Connection {
         let url = self.server_audit_conn.clone();
         let mut v = v;
         v["id"] = json!(Config::get_id());
-        //#region 获取UUID - Android平台使用export_serial_number
+        //#region 获取UUID - Android平台 UUID==ID
         #[cfg(target_os = "android")]
-        let uuid = {
-            if let Some(serial_number) = crate::ui_interface::get_export_serial_number() {
-                crate::encode64(serial_number.into_bytes())
-            } else {
-                crate::encode64(hbb_common::get_uuid())
-            }
-        };
+        let uuid = crate::android_device_id::get_android_uuid_b64_from_id();
         #[cfg(not(target_os = "android"))]
         let uuid = crate::encode64(hbb_common::get_uuid());
         //#endregion
@@ -1312,13 +1306,7 @@ impl Connection {
         info["files"] = json!(files);
         // Compute uuid string first to avoid placing cfg attributes inside json! macro
         #[cfg(target_os = "android")]
-        let uuid_str = {
-            if let Some(serial_number) = crate::ui_interface::get_export_serial_number() {
-                crate::encode64(serial_number.into_bytes())
-            } else {
-                crate::encode64(hbb_common::get_uuid())
-            }
-        };
+        let uuid_str = crate::android_device_id::get_android_uuid_b64_from_id();
         #[cfg(not(target_os = "android"))]
         let uuid_str = crate::encode64(hbb_common::get_uuid());
 
@@ -1347,15 +1335,9 @@ impl Connection {
         }
         let mut v = Value::default();
         v["id"] = json!(Config::get_id());
-        //#region 获取UUID - Android平台使用export_serial_number
+        //#region 获取UUID - Android平台 UUID==ID
         #[cfg(target_os = "android")]
-        let uuid = {
-            if let Some(serial_number) = crate::ui_interface::get_export_serial_number() {
-                crate::encode64(serial_number.into_bytes())
-            } else {
-                crate::encode64(hbb_common::get_uuid())
-            }
-        };
+        let uuid = crate::android_device_id::get_android_uuid_b64_from_id();
         #[cfg(not(target_os = "android"))]
         let uuid = crate::encode64(hbb_common::get_uuid());
         //#endregion
