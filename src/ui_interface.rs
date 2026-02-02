@@ -1325,13 +1325,50 @@ pub async fn change_id_shared(id: String, old_id: String) -> String {
 }
 
 pub async fn change_id_shared_(id: String, old_id: String) -> &'static str {
-    if !hbb_common::is_valid_custom_id(&id) {
+    // Android 放宽校验：允许数字或字母开头，长度 6-16，字符集 [A-Za-z0-9_-]
+    #[cfg(target_os = "android")]
+    let valid = {
+        let bytes = id.as_bytes();
+        if bytes.len() < 6 || bytes.len() > 16 {
+            false
+        } else {
+            let first = bytes[0] as char;
+            if !first.is_ascii_alphanumeric() {
+                false
+            } else {
+                bytes.iter().all(|&b| {
+                    let c = b as char;
+                    c.is_ascii_alphanumeric() || c == '_' || c == '-'
+                })
+            }
+        }
+    };
+    #[cfg(not(target_os = "android"))]
+    let valid = hbb_common::is_valid_custom_id(&id);
+
+    if !valid {
         log::debug!(
             "debugging invalid id: \"{id}\", len: {}, base64: \"{}\"",
             id.len(),
             crate::encode64(&id)
         );
         let bom = id.trim_start_matches('\u{FEFF}');
+        #[cfg(target_os = "android")]
+        {
+            let bytes = bom.as_bytes();
+            let bom_valid = if bytes.len() < 6 || bytes.len() > 16 {
+                false
+            } else {
+                let first = bytes.get(0).map(|b| *b as char).unwrap_or('\0');
+                first.is_ascii_alphanumeric()
+                    && bytes.iter().all(|&b| {
+                        let c = b as char;
+                        c.is_ascii_alphanumeric() || c == '_' || c == '-'
+                    })
+            };
+            log::debug!("bom(android): {}", bom_valid);
+        }
+        #[cfg(not(target_os = "android"))]
         log::debug!("bom: {}", hbb_common::is_valid_custom_id(&bom));
         return INVALID_FORMAT;
     }
